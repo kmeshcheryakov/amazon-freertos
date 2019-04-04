@@ -377,9 +377,21 @@ int main( void )
     xLoggingTaskInitialize( mainLOGGING_TASK_STACK_SIZE,
                             tskIDLE_PRIORITY,
                             mainLOGGING_MESSAGE_QUEUE_LENGTH );
-
+    
     nrf_sdh_freertos_init( NULL, NULL );
+    configPRINTF( ("Demo Firmware, version: %d.%d.%d\r\n",
+                    xAppFirmwareVersion.u.x.ucMajor, xAppFirmwareVersion.u.x.ucMinor, xAppFirmwareVersion.u.x.usBuild ));
     ret_code_t xErrCode = pm_init();
+    
+    if( xErrCode != NRF_SUCCESS )
+    {
+        APP_ERROR_CHECK( xErrCode );
+
+        while( 1 )
+        {
+        }
+    }
+
     vTaskStartScheduler();
 
     return 0;
@@ -415,6 +427,7 @@ static void prvDeleteBonds( void )
     xErrCode = pm_peers_delete();
     APP_ERROR_CHECK( xErrCode );
 }
+
 void vApplicationDaemonTaskStartupHook( void )
 {
     uint32_t ulEnabledNetworks;

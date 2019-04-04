@@ -519,7 +519,10 @@
           <file file_name="../../../common/network_manager/aws_iot_network_manager.c" />
         </folder>
         <folder Name="mqtt_v4">
-          <file file_name="../../../common/mqtt_v4/aws_mqtt_ble_hello_world.c" />
+          <file file_name="../../../common/mqtt_v4/aws_mqtt_ble_hello_world.c">
+            <configuration Name="Release" build_exclude_from_build="Yes" />
+          </file>
+          <file file_name="../common/application_code/aws_demo_nrf52dk.c" />
         </folder>
         <folder Name="logging">
           <file file_name="../../../common/logging/aws_logging_task_dynamic_buffers.c" />

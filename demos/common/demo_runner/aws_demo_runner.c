@@ -41,12 +41,14 @@
 /* extern void vStartOTAUpdateDemoTask( void ); */
 /* extern void vStartMQTTEchoDemo( void ); */
 /* extern void vStartMQTTv4Demo( void ); */
-extern void vStartMQTTBLEEchoDemo( void );
+/* extern void vStartMQTTBLEEchoDemo( void ); */
 /* extern void vStartSimpleTCPServerTasks( void ); */
 /* extern void vStartSubpubDemoTasks( void ); */
 /* extern void vStartTCPEchoClientTasks_SeparateTasks( void ); */
 /* extern void vStartTCPEchoClientTasks_SingleTasks( void ); */
 /* extern void vStartPOSIXDemo( void ); */
+
+extern void vStartMQTTBLESensorsDemo( void );
 
 /*-----------------------------------------------------------*/
 
@@ -55,10 +57,11 @@ extern void vStartMQTTBLEEchoDemo( void );
  */
 void DEMO_RUNNER_RunDemos( void )
 {
+    vStartMQTTBLESensorsDemo();
     /* vStartDeviceDefenderDemo(); */
     /* vStartGreenGrassDiscoveryTask(); */
     /* vStartOTAUpdateDemoTask(); */
-    vStartMQTTBLEEchoDemo();
+    /* vStartMQTTBLEEchoDemo(); */
     /* vStartMQTTv4Demo(); */
     /* vStartMQTTEchoDemo(); */
     /* vStartSimpleTCPServerTasks(); */
