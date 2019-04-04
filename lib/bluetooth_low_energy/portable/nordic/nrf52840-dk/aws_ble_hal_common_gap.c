@@ -33,10 +33,11 @@
 
 #include "FreeRTOS.h"
 
+#include "aws_ble_event_manager.h"
 #include "bt_hal_manager_adapter_ble.h"
 #include "bt_hal_manager.h"
 #include "bt_hal_gatt_server.h"
-#include "iot_ble_config.h"
+#include "aws_ble_config.h"
 #include "aws_ble_hal_internals.h"
 #include "aws_ble_gap_config.h"
 #include "ble_gap.h"
@@ -59,7 +60,7 @@ static BTCallbacks_t xBTCallbacks;
 BTProperties_t xProperties;
 BTBdaddr_t xConnectionRemoteAddress;
 static bool bIsConnected = false;
-uint8_t pucBondedAddresses[ btADDRESS_LEN * IOT_BLE_MAX_BONDED_DEVICES ];
+uint8_t pucBondedAddresses[ btADDRESS_LEN * bleconfigMAX_BONDED_DEVICES ];
 
 BTStatus_t prvBTManagerInit( const BTCallbacks_t * pxCallbacks );
 BTStatus_t prvBtManagerCleanup( void );
@@ -513,7 +514,9 @@ void prvGAPeventHandler( ble_evt_t const * p_ble_evt,
 
             if( xGattServerCb.pxMtuChangedCb != NULL )
             {
-                xGattServerCb.pxMtuChangedCb( p_ble_evt->evt.gap_evt.conn_handle, p_ble_evt->evt.gattc_evt.params.exchange_mtu_rsp.server_rx_mtu );
+                nrf_ble_gatt_link_t * p_link = &xGattHandler->links[p_ble_evt->evt.gap_evt.conn_handle];
+                xGattServerCb.pxMtuChangedCb( p_ble_evt->evt.gap_evt.conn_handle, p_link->att_mtu_effective);
+                //xGattServerCb.pxMtuChangedCb( p_ble_evt->evt.gap_evt.conn_handle, p_ble_evt->evt.gattc_evt.params.exchange_mtu_rsp.server_rx_mtu );
             }
 
             break;
@@ -522,7 +525,9 @@ void prvGAPeventHandler( ble_evt_t const * p_ble_evt,
 
             if( xGattServerCb.pxMtuChangedCb != NULL )
             {
-                xGattServerCb.pxMtuChangedCb( p_ble_evt->evt.gap_evt.conn_handle, p_ble_evt->evt.gatts_evt.params.exchange_mtu_request.client_rx_mtu );
+                nrf_ble_gatt_link_t * p_link = &xGattHandler->links[p_ble_evt->evt.gap_evt.conn_handle];
+                xGattServerCb.pxMtuChangedCb( p_ble_evt->evt.gap_evt.conn_handle, p_link->att_mtu_effective);
+                //xGattServerCb.pxMtuChangedCb( p_ble_evt->evt.gap_evt.conn_handle, p_ble_evt->evt.gatts_evt.params.exchange_mtu_request.client_rx_mtu );
             }
 
             break;
@@ -685,8 +690,8 @@ BTStatus_t prvBTManagerInit( const BTCallbacks_t * pxCallbacks )
 
     memset( &xProperties, 0, sizeof( xProperties ) );
     xProperties.xDeviceType = eBTdeviceDevtypeBle;
-    /* Set the device name from the iot_ble_config.h. We store it without a trailing zero. */
-    xProperties.usDeviceNameLength = sizeof( IOT_BLE_DEVICE_NAME ) - 1;
+    /* Set the device name from the aws_ble_config.h. We store it without a trailing zero. */
+    xProperties.usDeviceNameLength = sizeof( bleconfigDEVICE_NAME ) - 1;
     xProperties.puDeviceName = ( uint8_t * ) pvPortMalloc( xProperties.usDeviceNameLength );
     xProperties.ulMtu = NRF_SDH_BLE_GATT_MAX_MTU_SIZE;
     xProperties.bOnlySecure = true;
@@ -694,7 +699,7 @@ BTStatus_t prvBTManagerInit( const BTCallbacks_t * pxCallbacks )
 
     if( xProperties.puDeviceName != NULL )
     {
-        memcpy( xProperties.puDeviceName, IOT_BLE_DEVICE_NAME, xProperties.usDeviceNameLength );
+        memcpy( xProperties.puDeviceName, bleconfigDEVICE_NAME, xProperties.usDeviceNameLength );
     }
     else
     {
@@ -729,6 +734,14 @@ BTStatus_t prvBtManagerCleanup()
 BTStatus_t prvBTEnable( uint8_t ucGuestMode )
 {
     BTStatus_t xStatus = eBTStatusSuccess;
+    uint32_t xNRFstatus = 0;
+
+    xNRFstatus = nrf_sdh_enable_request();
+
+    if( xNRFstatus != NRF_SUCCESS )
+    {
+        xStatus = eBTStatusFail;
+    }
 
     /** If status is ok and callback is set, trigger the callback.
      *  If status is fail, not need to trig a callback as original call failed.
@@ -875,7 +888,7 @@ BTStatus_t prvBTGetDeviceProperty( BTPropertyType_t xType )
                        memcpy(&(pucBondedAddresses[peer_count * btADDRESS_LEN]), bonding_data.peer_ble_id.id_addr_info.addr, btADDRESS_LEN); 
                        peer_count += 1;
 
-                       if( peer_count >= IOT_BLE_MAX_BONDED_DEVICES )
+                       if( peer_count >= bleconfigMAX_BONDED_DEVICES )
                        {
                            break;
                        }
@@ -975,7 +988,7 @@ BTStatus_t prvBTSetDeviceProperty( const BTProperty_t * pxProperty )
                     #endif
                 #else
                 /* Mode 1 */
-                    #if ( bleconfigREQUIRE_MITM && IOT_BLE_ENABLE_SECURE_CONNECTION ) /* Level 4 */
+                    #if ( bleconfigREQUIRE_MITM && bleconfigENABLE_SECURE_CONNECTION ) /* Level 4 */
                         xLevel = SEC_MITM;
                         bLesc = true;
                     #elif bleconfigREQUIRE_MITM  /* Level 3 */
@@ -1219,7 +1232,7 @@ BTStatus_t prvBTRemoveBond( const BTBdaddr_t * pxBdAddr )
             /*  }; */
             peer_count += 1;
 
-            if( peer_count >= IOT_BLE_MAX_BONDED_DEVICES )
+            if( peer_count >= bleconfigMAX_BONDED_DEVICES )
             {
                 xErrCode = NRF_ERROR_NOT_FOUND;
                 break;
