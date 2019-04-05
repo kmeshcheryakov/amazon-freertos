@@ -521,6 +521,7 @@
         <folder Name="mqtt_v4">
           <file file_name="../../../common/mqtt_v4/aws_mqtt_ble_hello_world.c">
             <configuration Name="Release" build_exclude_from_build="Yes" />
+            <configuration Name="Debug" build_exclude_from_build="Yes" />
           </file>
           <file file_name="../common/application_code/aws_demo_nrf52dk.c" />
         </folder>
@@ -528,7 +529,10 @@
           <file file_name="../../../common/logging/aws_logging_task_dynamic_buffers.c" />
         </folder>
         <folder Name="ota">
-          <file file_name="../../../common/ota/aws_iot_ota_update_demo.c" />
+          <file file_name="../../../common/ota/aws_iot_ota_update_demo.c">
+            <configuration Name="Debug" build_exclude_from_build="Yes" />
+            <configuration Name="Release" build_exclude_from_build="Yes" />
+          </file>
         </folder>
       </folder>
       <file file_name="../common/application_code/main.c" />
@@ -555,7 +559,7 @@
     c_preprocessor_definitions="NDEBUG"
     gcc_debugging_level="None"
     gcc_omit_frame_pointer="Yes"
-    gcc_optimization_level="None" />
+    gcc_optimization_level="Level 2" />
   <configuration
     Name="Debug"
     arm_fp_abi="None"
@@ -573,7 +577,7 @@
     debug_target_connection="J-Link"
     gcc_debugging_level="Level 3"
     gcc_entry_point="Reset_Handler"
-    linker_output_format="hex"
+    linker_output_format="bin"
     linker_printf_fmt_level="long"
     linker_printf_width_precision_supported="Yes"
     linker_section_placement_file="flash_placement.xml"

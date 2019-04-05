@@ -514,7 +514,9 @@ void prvGAPeventHandler( ble_evt_t const * p_ble_evt,
 
             if( xGattServerCb.pxMtuChangedCb != NULL )
             {
-                xGattServerCb.pxMtuChangedCb( p_ble_evt->evt.gap_evt.conn_handle, p_ble_evt->evt.gattc_evt.params.exchange_mtu_rsp.server_rx_mtu );
+                nrf_ble_gatt_link_t * p_link = &xGattHandler->links[p_ble_evt->evt.gap_evt.conn_handle];
+                xGattServerCb.pxMtuChangedCb( p_ble_evt->evt.gap_evt.conn_handle, p_link->att_mtu_effective);
+                //xGattServerCb.pxMtuChangedCb( p_ble_evt->evt.gap_evt.conn_handle, p_ble_evt->evt.gattc_evt.params.exchange_mtu_rsp.server_rx_mtu );
             }
 
             break;
@@ -523,7 +525,9 @@ void prvGAPeventHandler( ble_evt_t const * p_ble_evt,
 
             if( xGattServerCb.pxMtuChangedCb != NULL )
             {
-                xGattServerCb.pxMtuChangedCb( p_ble_evt->evt.gap_evt.conn_handle, p_ble_evt->evt.gatts_evt.params.exchange_mtu_request.client_rx_mtu );
+                nrf_ble_gatt_link_t * p_link = &xGattHandler->links[p_ble_evt->evt.gap_evt.conn_handle];
+                xGattServerCb.pxMtuChangedCb( p_ble_evt->evt.gap_evt.conn_handle, p_link->att_mtu_effective);
+                //xGattServerCb.pxMtuChangedCb( p_ble_evt->evt.gap_evt.conn_handle, p_ble_evt->evt.gatts_evt.params.exchange_mtu_request.client_rx_mtu );
             }
 
             break;
