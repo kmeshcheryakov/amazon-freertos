@@ -80,6 +80,11 @@ static _metrics_t _metrics = { 0 };
 /* Define a "snapshot" global array of metrics flag. */
 static uint32_t _metricsFlagSnapshot[ _DEFENDER_METRICS_GROUP_COUNT ];
 
+/* Report id integer. */
+uint64_t _AwsIotDefenderReportId = 0;
+
+/*---------------------- Helper Functions -------------------------*/
+
 static void copyMetricsFlag();
 
 static AwsIotDefenderEventType_t getLatestMetricsData();
@@ -92,14 +97,6 @@ static void tcpConnectionsCallback( void * param1,
 static void _serialize();
 
 static void _serializeTcpConnections( AwsIotSerializerEncoderObject_t * pMetricsObject );
-
-/**
- * Attempt to serialize metrics report with given data buffer.
- */
-
-/*static bool _serialize( AwsIotSerializerEncoderObject_t * pEncoderObject,
- *                      uint8_t * pDataBuffer,
- *                      size_t dataSize );*/
 
 /*-----------------------------------------------------------*/
 
@@ -126,7 +123,8 @@ uint8_t * AwsIotDefenderInternal_GetReportBuffer()
 
 size_t AwsIotDefenderInternal_GetReportBufferSize()
 {
-    return _report.size;
+    /* Encoder might over-calculate the needed size. Therefor encoded size might be smaller than buffer size: _report.size. */
+    return _AwsIotDefenderEncoder.getEncodedSize( &_report.object, _report.pDataBuffer );
 }
 
 /*-----------------------------------------------------------*/
@@ -150,6 +148,9 @@ AwsIotDefenderEventType_t AwsIotDefenderInternal_CreateReport()
 
     if( !eventError )
     {
+        /* Generate report id based on current time. */
+        _AwsIotDefenderReportId = AwsIotClock_GetTimeMs();
+
         /* Dry-run serialization to calculate the required size. */
         _serialize();
 
@@ -247,7 +248,7 @@ static void _serialize()
     /* Append key-value pair of "report_Id" which uses clock time. */
     serializerError = _AwsIotDefenderEncoder.appendKeyValue( &headerMap,
                                                              _REPORTID_TAG,
-                                                             AwsIotSerializer_ScalarSignedInt( AwsIotClock_GetTimeMs() ) );
+                                                             AwsIotSerializer_ScalarSignedInt( _AwsIotDefenderReportId ) );
     assertNoError( serializerError );
 
     /* Append key-value pair of "version". */
@@ -305,12 +306,12 @@ static void _serialize()
 static void copyMetricsFlag()
 {
     /* Copy the metrics flags to snapshot so that it is unlocked quicker. */
-    AwsIotMutex_Lock( &_AwsIotDefenderMetrics.mutex );
+    IotMutex_Lock( &_AwsIotDefenderMetrics.mutex );
 
     /* Memory copy from the metricsFlag array to metricsFlagSnapshot array. */
     memcpy( _metricsFlagSnapshot, _AwsIotDefenderMetrics.metricsFlag, sizeof( _metricsFlagSnapshot ) );
 
-    AwsIotMutex_Unlock( &_AwsIotDefenderMetrics.mutex );
+    IotMutex_Unlock( &_AwsIotDefenderMetrics.mutex );
 }
 
 /*-----------------------------------------------------------*/
@@ -377,7 +378,7 @@ static void tcpConnectionsCallback( void * param1,
                 pConnection = IotLink_Container( IotMetricsTcpConnection_t, pConnectionLink, link );
 
                 /* Copy to new allocated array. */
-                _metrics.tcpConns.pArray[ i++ ] = *pConnection;
+                _metrics.tcpConns.pArray[ i ] = *pConnection;
 
                 /* Iterate to next one. */
                 pConnectionLink = pConnectionLink->pNext;

@@ -30,7 +30,6 @@
 
 #include <string.h>
 #include "FreeRTOS.h"
-#include "aws_ble_event_manager.h"
 #include "esp_bt.h"
 #include "esp_gap_ble_api.h"
 #include "esp_gatt_common_api.h"
@@ -130,13 +129,9 @@ static BTInterface_t xBTinterface =
 void prvGAPeventHandler( esp_gap_ble_cb_event_t event,
                          esp_ble_gap_cb_param_t * param )
 {
-    void * ppvEventParams = NULL;
-    bool bFoundEvent;
     BTStatus_t xStatus = eBTStatusSuccess;
     BTSecurityLevel_t xSecurityLevel;
 	BTBondState_t xBondedState;
-
-    vEVTMNGRgetEventParameters( ulGAPEvtMngHandle, event, &ppvEventParams, &bFoundEvent );
 
     switch( event )
     {
@@ -320,10 +315,6 @@ void prvGAPeventHandler( esp_gap_ble_cb_event_t event,
             break;
     }
 
-    if( ppvEventParams != NULL )
-    {
-        ( void ) vPortFree( ppvEventParams );
-    }
 }
 
 /*
@@ -439,9 +430,12 @@ BTStatus_t prvBTEnable( uint8_t ucGuestMode )
 {
     BTStatus_t xStatus = eBTStatusSuccess;
 
-    if( esp_bluedroid_enable() != ESP_OK )
+    if( esp_bt_controller_get_status() != ESP_BT_CONTROLLER_STATUS_ENABLED )
     {
-        xStatus = eBTStatusFail;
+        if( esp_bt_controller_enable( ESP_BT_MODE_BLE ) != ESP_OK )
+        {
+            xStatus = eBTStatusFail;
+        }
     }
 
     /** If status is ok and callback is set, trigger the callback.
@@ -461,9 +455,12 @@ BTStatus_t prvBTDisable()
 {
     BTStatus_t xStatus = eBTStatusSuccess;
 
-    if( esp_bluedroid_disable() != ESP_OK )
+    if( esp_bt_controller_get_status() != ESP_BT_CONTROLLER_STATUS_ENABLED )
     {
-        xStatus = eBTStatusFail;
+        if( esp_bt_controller_disable() != ESP_OK )
+        {
+            xStatus = eBTStatusFail;
+        }
     }
 
     /** If status is ok and callback is set, trigger the callback.

@@ -5,6 +5,7 @@ COMPONENT_SRCDIRS := $(AMAZON_FREERTOS_LIB_DIR)/mqtt \
         $(AMAZON_FREERTOS_LIB_DIR)/shadow \
         $(AMAZON_FREERTOS_LIB_DIR)/greengrass \
         $(AMAZON_FREERTOS_LIB_DIR)/utils \
+        $(AMAZON_FREERTOS_LIB_DIR)/utils/taskpool \
         $(AMAZON_FREERTOS_LIB_DIR)/common \
         $(AMAZON_FREERTOS_LIB_DIR)/utils/platform \
         $(AMAZON_FREERTOS_LIB_DIR)/bufferpool \
@@ -36,6 +37,7 @@ COMPONENT_SRCDIRS := $(AMAZON_FREERTOS_LIB_DIR)/mqtt \
 
 COMPONENT_ADD_INCLUDEDIRS := $(AMAZON_FREERTOS_LIB_DIR)/FreeRTOS-Plus-TCP/include \
                              $(AMAZON_FREERTOS_LIB_DIR)/FreeRTOS-Plus-TCP/source/portable/Compiler/GCC \
+                             $(AMAZON_FREERTOS_LIB_DIR)/FreeRTOS-Plus-POSIX/include \
                              $(AMAZON_FREERTOS_LIB_DIR)/FreeRTOS-Plus-POSIX/include/portable/espressif/esp32_devkitc_esp_wrover_kit \
                              $(AMAZON_FREERTOS_LIB_DIR)/include/bluetooth_low_energy \
                              $(AMAZON_FREERTOS_LIB_DIR)/bluetooth_low_energy/portable/espressif \
@@ -47,6 +49,7 @@ COMPONENT_OBJEXCLUDE := $(AMAZON_FREERTOS_LIB_DIR)/FreeRTOS-Plus-TCP/source/port
                         $(AMAZON_FREERTOS_LIB_DIR)/FreeRTOS-Plus-POSIX/source/FreeRTOS_POSIX_pthread_cond.o \
                         $(AMAZON_FREERTOS_LIB_DIR)/FreeRTOS-Plus-POSIX/source/FreeRTOS_POSIX_pthread_mutex.o \
                         $(AMAZON_FREERTOS_LIB_DIR)/ota/aws_ota_agent.o \
+                        $(AMAZON_FREERTOS_LIB_DIR)/FreeRTOS-Plus-POSIX/source/FreeRTOS_POSIX_pthread_cond.o \
                         $(AMAZON_FREERTOS_LIB_DIR)/FreeRTOS-Plus-POSIX/source/FreeRTOS_POSIX_sched.o
 
 ifndef AMAZON_FREERTOS_ENABLE_UNIT_TEST
@@ -61,13 +64,14 @@ COMPONENT_SRCDIRS += ../.. \
     $(AMAZON_FREERTOS_DEMOS_DIR)/common/ota \
     $(AMAZON_FREERTOS_DEMOS_DIR)/common/ble \
     $(AMAZON_FREERTOS_DEMOS_DIR)/common/network_manager \
+    $(AMAZON_FREERTOS_DEMOS_DIR)/common/wifi_provisioning
 
 COMPONENT_ADD_INCLUDEDIRS += $(AMAZON_FREERTOS_DEMOS_DIR)/common/include
 endif
 
 COMPONENT_PRIV_INCLUDEDIRS := $(AMAZON_FREERTOS_LIB_DIR)/third_party/pkcs11 $(AMAZON_FREERTOS_LIB_DIR)/ota/portable/espressif/esp32_devkitc_esp_wrover_kit
 
-CFLAGS += -DAWS_IOT_CONFIG_FILE="\"aws_iot_config.h\""
+CFLAGS += -DIOT_CONFIG_FILE="\"iot_demo_config.h\""
 
 lib/greengrass/aws_greengrass_discovery.o: CFLAGS+=-Wno-format
 demos/common/logging/aws_logging_task_dynamic_buffers.o: CFLAGS+=-Wno-format -Wno-uninitialized

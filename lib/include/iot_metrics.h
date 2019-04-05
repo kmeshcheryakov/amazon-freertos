@@ -29,6 +29,11 @@
 #define _IOT_METRICS_H_
 
 #include <stdint.h>
+
+#ifdef IOT_CONFIG_FILE
+    #include IOT_CONFIG_FILE
+#endif
+
 #include "iot_linear_containers.h"
 
 /**

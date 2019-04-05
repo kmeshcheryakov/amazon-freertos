@@ -1,5 +1,5 @@
 /*
- * Amazon FreeRTOS Secure Sockets AFQP V1.1.2  
+ * Amazon FreeRTOS Secure Sockets AFQP V1.1.4
  * Copyright (C) 2017 Amazon.com, Inc. or its affiliates.  All Rights Reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy of
@@ -1739,7 +1739,7 @@ TEST( Full_TCP, AFQP_SOCKETS_Socket_InvalidInputParams )
 
 static void prvSOCKETS_Socket_InvalidTooManySockets( Server_t xConn )
 {
-    #if !defined( WIN32 ) && !defined( PIC32MZ ) && !defined( ESP32 ) && !defined( ZYNQ7000 ) /* Socket can be created as much as there is memory */
+    #if !defined( WIN32 ) && !defined( PIC32MZ ) && !defined( ESP32 ) && !defined( ZYNQ7000 ) && !defined( __RX ) /* Socket can be created as much as there is memory */
         BaseType_t xResult;
         Socket_t xCreatedSockets[ integrationtestportableMAX_NUM_UNSECURE_SOCKETS ];
         BaseType_t xSocketsCreated;
@@ -1890,6 +1890,9 @@ static void prvConnect_InvalidAddressLength( Server_t xConn,
 
     if( TEST_PROTECT() )
     {
+        xEchoServerAddress.ucLength = ( uint8_t ) ulAddressLength;
+        xEchoServerAddress.ucSocketDomain = ( uint8_t ) SOCKETS_AF_INET;
+
         if( xConn == eNonsecure )
         {
             /* Populate the non-secure echo server address. */
@@ -1952,8 +1955,8 @@ TEST( Full_TCP, AFQP_SOCKETS_Connect_InvalidAddressLength )
     /* AddressLength 0. */
     prvConnect_InvalidAddressLength( eNonsecure, 0 );
 
-    /* AddressLength 1000. */
-    prvConnect_InvalidAddressLength( eNonsecure, 1000 );
+    /* AddressLength 100. */
+    prvConnect_InvalidAddressLength( eNonsecure, 100 );
 
     tcptestPRINTF( ( "%s complete.\r\n", __FUNCTION__ ) );
 }
@@ -1966,8 +1969,8 @@ TEST( Full_TCP, AFQP_SECURE_SOCKETS_Connect_InvalidAddressLength )
     /* AddressLength 0. */
     prvConnect_InvalidAddressLength( eSecure, 0 );
 
-    /* AddressLength 1000. */
-    prvConnect_InvalidAddressLength( eSecure, 1000 );
+    /* AddressLength 100. */
+    prvConnect_InvalidAddressLength( eSecure, 100 );
 
     tcptestPRINTF( ( "%s complete.\r\n", __FUNCTION__ ) );
 }

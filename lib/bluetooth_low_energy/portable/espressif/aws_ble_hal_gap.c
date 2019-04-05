@@ -37,9 +37,7 @@
 #include "bt_hal_manager_adapter_ble.h"
 #include "bt_hal_manager.h"
 #include "bt_hal_gatt_server.h"
-#include "aws_ble_event_manager.h"
 #include "aws_ble_hal_internals.h"
-#include "aws_ble_event_manager.h"
 
 BTBleAdapterCallbacks_t xBTBleAdapterCallbacks;
 static esp_ble_adv_params_t xAdv_params;
@@ -302,19 +300,6 @@ BTStatus_t prvBTBleAdapterInit( const BTBleAdapterCallbacks_t * pxCallbacks )
     xProperties.bSecureConnectionOnly = true;
     xProperties.xPropertyIO = eBTIODisplayYesNo;
 
-    if( vEVTMNGRinitialize() != pdPASS )
-    {
-        xESPstatus = ESP_FAIL;
-    }
-
-    if( xESPstatus == ESP_OK )
-    {
-        if( vEVTMNGRgetNewInstance( &ulGAPEvtMngHandle, ESP_GAP_BLE_EVT_MAX ) != pdPASS )
-        {
-            xESPstatus = ESP_FAIL;
-        }
-    }
-
     if( xESPstatus == ESP_OK )
     {
         xESPstatus = esp_ble_gap_register_callback( prvGAPeventHandler );
@@ -493,7 +478,14 @@ BTStatus_t prvBTDisconnect( uint8_t ucAdapterIf,
                             const BTBdaddr_t * pxBdAddr,
                             uint16_t usConnId )
 {
-    BTStatus_t xStatus = eBTStatusUnsupported;
+    BTStatus_t xStatus = eBTStatusSuccess;
+    esp_bd_addr_t xAddr = { 0 };
+
+    memcpy( xAddr, pxBdAddr->ucAddress, ESP_BD_ADDR_LEN );
+    if( esp_ble_gap_disconnect( xAddr ) != ESP_OK )
+    {
+        xStatus = eBTStatusFail;
+    }
 
     return xStatus;
 }

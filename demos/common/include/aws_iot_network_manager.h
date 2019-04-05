@@ -36,7 +36,7 @@
 #include "FreeRTOS.h"
 #include "aws_doubly_linked_list.h"
 #include "semphr.h"
-#include "aws_iot_network.h"
+#include "iot_network_manager.h"
 
 /**
  * @brief Unique handle for a Subscription.
@@ -78,18 +78,18 @@ BaseType_t AwsIotNetworkManager_RemoveSubscription(  SubscriptionHandle_t xHandl
  */
 uint32_t AwsIotNetworkManager_GetConnectedNetworks( void );
 
-
-/**
- * @brief Blocks for atleast one network connection. Returns back the connected networks on atleast one successful connection.
- * @return Network Types of all connected networks.
- */
-uint32_t AwsIotNetworkManager_WaitForNetworkConnection( void );
-
 /**
  * @brief Gets all supported networks
  * @return Flags indicating all configured networks
  */
 uint32_t AwsIotNetworkManager_GetConfiguredNetworks( void );
+
+
+/**
+ * @brief Get the networks which are enabled currently.
+ * @return Flags indicating all enabled networks.
+ */
+uint32_t AwsIotNetworkManager_GetEnabledNetworks( void );
 
 /**
  * API to enable network manager for different networks

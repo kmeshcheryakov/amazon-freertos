@@ -1,5 +1,5 @@
 /*
- * Amazon FreeRTOS V1.4.2
+ * Amazon FreeRTOS V1.4.7
  * Copyright (C) 2017 Amazon.com, Inc. or its affiliates.  All Rights Reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy of
@@ -38,7 +38,7 @@
 /* Demo declarations. */
 /* extern void vStartDeviceDefenderDemo( void ); */
 /* extern void vStartGreenGrassDiscoveryTask( void ); */
-/* extern void vStartOTAUpdateDemoTask( void ); */
+/*extern void vStartOTAUpdateDemoTask( void );*/
 /* extern void vStartMQTTEchoDemo( void ); */
 /* extern void vStartMQTTv4Demo( void ); */
 /* extern void vStartMQTTBLEEchoDemo( void ); */
@@ -64,6 +64,7 @@ void DEMO_RUNNER_RunDemos( void )
     /* vStartMQTTBLEEchoDemo(); */
     /* vStartMQTTv4Demo(); */
     /* vStartMQTTEchoDemo(); */
+    /* vStartShadowDemoTasks(); */
     /* vStartSimpleTCPServerTasks(); */
     /* vStartSubpubDemoTasks(); */
     /* vStartTCPEchoClientTasks_SeparateTasks(); */

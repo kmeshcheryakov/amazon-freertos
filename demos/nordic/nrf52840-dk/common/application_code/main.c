@@ -38,8 +38,6 @@
 
 /* Nordic BSP includes */
 #include "bsp.h"
-#include "nordic_common.h"
-#include "nrf_drv_clock.h"
 #include "nrf_log_ctrl.h"
 #include "nrf_log_default_backends.h"
 #include "nrf_sdh.h"
@@ -47,9 +45,6 @@
 #include "nrf_sdh_ble.h"
 #include "nrf_sdh_freertos.h"
 #include "sensorsim.h"
-#include "ble_srv_common.h"
-#include "ble_advdata.h"
-#include "ble_advertising.h"
 #include "timers.h"
 #include "app_timer.h"
 #include "ble_conn_state.h"
@@ -59,31 +54,18 @@
 #include "ble_conn_params.h"
 #include "peer_manager.h"
 #include "peer_manager_handler.h"
-#include "fds.h"
 #include "bsp_btn_ble.h"
-
-#include "aws_ble_hal_dis.h"
-
-#include "nrf_log.h"
-#include "nrf_log_ctrl.h"
-#include "nrf_log_default_backends.h"
-#include "ble_types.h"
-#include "nrf_ble_lesc.h"
-
-#include "bt_hal_manager_adapter_ble.h"
-#include "bt_hal_manager.h"
-#include "bt_hal_gatt_server.h"
-#include "aws_ble_services_init.h"
 #include "app_uart.h"
 
 /* MQTT v4 include. */
-#include "aws_iot_mqtt.h"
+#include "iot_mqtt.h"
 
-#include <aws_ble.h>
-#include "aws_ble_numericComparison.h"
+#include "iot_ble.h"
+#include "iot_ble_numericComparison.h"
 #include "aws_iot_network_manager.h"
 #include "SEGGER_RTT.h"
 #include "aws_application_version.h"
+#include "iot_taskpool.h"
 #if defined( UART_PRESENT )
     #include "nrf_uart.h"
 #endif
@@ -98,8 +80,6 @@
 #define mainLOGGING_TASK_STACK_SIZE         ( configMINIMAL_STACK_SIZE * 4 )
 
 /* BLE Lib defines. */
-#define mainBLE_DEVICE_NAME                 "nRF52840-dk"                               /**< Name of device. Will be included in the advertising data. */
-#define mainBLE_MTU                         ( NRF_SDH_BLE_GATT_MAX_MTU_SIZE );
 #define mainBLE_SERVER_UUID                 { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }
 
 /* UART Buffer sizes. */
@@ -352,6 +332,7 @@ static void prvTimersInit( void )
 
 static void prvMiscInitialization( void )
 {
+    nrf_sdh_enable_request();
     /* Initialize modules.*/
     xUARTTxComplete = xSemaphoreCreateBinary();
     prvUartInit();
@@ -431,15 +412,22 @@ static void prvDeleteBonds( void )
 void vApplicationDaemonTaskStartupHook( void )
 {
     uint32_t ulEnabledNetworks;
+    IotTaskPoolInfo_t taskPool = IOT_TASKPOOL_INFO_INITIALIZER_MEDIUM;
     /* FIX ME: Perform any hardware initialization, that require the RTOS to be
      * running, here. */
 
     BaseType_t xStatus = pdFALSE;
 
-    if( AwsIotMqtt_Init() == AWS_IOT_MQTT_SUCCESS )
+    xStatus = ( IotTaskPool_CreateSystemTaskPool( &taskPool ) == IOT_TASKPOOL_SUCCESS );
+
+     if( xStatus == pdPASS )
     {
-        xStatus = pdTRUE;
+      if( IotMqtt_Init() == IOT_MQTT_SUCCESS )
+      {
+          xStatus = pdTRUE;
+      }
     }
+
 
      if( AwsIotNetworkManager_Init() != pdPASS )
      {

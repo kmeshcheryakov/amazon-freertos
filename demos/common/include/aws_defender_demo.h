@@ -1,5 +1,5 @@
 /*
- * Amazon FreeRTOS V1.4.4
+ * Amazon FreeRTOS V1.4.7
  * Copyright (C) 2018 Amazon.com, Inc. or its affiliates.  All Rights Reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy of
@@ -27,10 +27,6 @@
 
 #include "aws_demo.h"
 
-/* old defender library demo, will be removed */
 demoDECLARE_DEMO( vStartDeviceDefenderDemo );
-
-/* new defender library demo */
-demoDECLARE_DEMO( vStartDefenderDemo );
 
 #endif /* end of include guard: _AWS_DEFENDER_DEMO_H_ */

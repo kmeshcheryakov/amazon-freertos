@@ -29,51 +29,100 @@
  * @brief Network manager is used to handled different types of network connections and their connection/disconnection events at the application layer.
  */
 #include <string.h>
-#include "aws_iot_demo.h"
+#include "iot_demo.h"
 #include "aws_iot_network_manager.h"
 
 #if BLE_ENABLED
-#include "aws_ble_config.h"
-#include "aws_ble.h"
-#include "aws_ble_numericComparison.h"
-#include "aws_ble_services_init.h"
-#if ( bleconfigENABLE_WIFI_PROVISIONING == 1 )
-#include "aws_ble_wifi_provisioning.h"
-#endif
+#include "iot_ble_config.h"
+#include "iot_ble.h"
+#include <iot_ble_numericComparison.h>
 #endif
 #if WIFI_ENABLED
 #include "aws_wifi.h"
 #include "aws_clientcredential.h"
 #endif
 
+#if ( IOT_BLE_ENABLE_WIFI_PROVISIONING == 1 )
+#include "iot_ble_wifi_provisioning.h"
+#include "aws_wifi_connect_task.h"
+#endif
+
+#include "iot_taskpool.h"
 
 /**
- *  @brief Structure used to store one node representing each subscription.
+ * @brief Maximum number of concurrent network events which can be queued for a network type.
  */
-typedef struct StateChangeSubscription
+#define _MAX_CONCURRENT_JOBS    ( 4 )
+
+/**
+ * @brief Initializer for WiFi Network Info structure.
+ */
+#define _NETWORK_INFO_WIFI            { .ulNetworkType = AWSIOT_NETWORK_TYPE_WIFI, .xNetworkState = eNetworkStateUnknown }
+
+/**
+ * @brief Initializer for BLE Network Info structure.
+ */
+#define _NETWORK_INFO_BLE             { .ulNetworkType = AWSIOT_NETWORK_TYPE_BLE, .xNetworkState = eNetworkStateUnknown }
+
+/**
+ * @brief User callback execution context used by task pool job.
+ */
+typedef struct NMCallbackExecutionContext
+{
+    IotTaskPoolJob_t xJob;
+    void *pvUserContext;
+    AwsIotNetworkState_t xNewtorkEvent;
+    uint32_t ulNetworkType;
+    struct NMCallbackExecutionContext * pxNextTask;
+
+} NMCallbackExecutionContext_t;
+
+/**
+ *  @brief Structure used to store the User Subscription information.
+ */
+typedef struct NMSubscription
 {
     Link_t xSubscriptionList;
     uint32_t ulNetworkTypes;
-    AwsIotNetworkStateChangeCb_t xCallback;
-    void *pvContext;
-} StateChangeSubscription_t;
+    AwsIotNetworkStateChangeCb_t xUserCallback;
+    void *pvUserContext;
+} NMSubscription_t;
+
 
 /**
- * @brief Subscription List structure containing list head and lock for the list.
+ * @brief Structure wraps the type and state of each networks enabled.
  */
-typedef struct StateChangeSubscriptionList
+typedef struct NMNetworkInfo
 {
-    SemaphoreHandle_t xLock;
-    Link_t xListHead;
+    Link_t xNetworkList;
+    uint32_t ulNetworkType;
+    AwsIotNetworkState_t xNetworkState;
+} NMNetworkInfo_t;
+
+/**
+ * @brief Global structure contains the list of all enabled network and user subscriptions, task pool and
+ * callback execution contexts.
+ */
+typedef struct NetworkManagerInfo
+{
+    SemaphoreHandle_t xSubscriptionLock;
+    Link_t xSubscriptionListHead;
+    Link_t xNetworkListHead;
+    IotTaskPool_t* pxTaskPool;
+    NMCallbackExecutionContext_t xJobs[ _MAX_CONCURRENT_JOBS ];
     bool xIsInit;
-} StateChangeSubscriptionList_t;
+} NetworkManagerInfo_t;
+
+#if BLE_ENABLED
+
+NMNetworkInfo_t xBLENetworkInfo = _NETWORK_INFO_BLE;
 
 /**
  * @brief Function used to enable a BLE network.
  *
  * @return true if BLE is enabled successfully.
  */
-static bool prvBLEEnable( void );
+static BaseType_t prxBLEEnable( void );
 
 
 /**
@@ -81,31 +130,9 @@ static bool prvBLEEnable( void );
  *
  * @return true if BLE is disable successfully, false if already disabled
  */
-static bool prvBLEDisable( void );
-
-/**
- * @brief Function used to enable a WIFI network.
- *
- * @return true if WIFI is enabled successfully.
- */
-static bool prvWIFIEnable( void );
-
-/**
- * @brief Function used to disable a WIFI network.
- *
- * @return true if WIFI is disable successfully, false if already disabled
- */
-static bool prvWIFIDisable( void );
-
-/**
- * @brief Function goes through the list of subscriptions and invoke the network state change subscription callbacks.
- * @param ulNetworkType Type of the network for which the state changed
- * @param xState The new state of the network.
- */
-static void prvInvokeNetworkStateChangeCallbacks( uint32_t ulNetworkType, AwsIotNetworkState_t xState );
+static BaseType_t prxBLEDisable( void );
 
 
-#if BLE_ENABLED
 /**
  * @brief Callback invoked when a BLE network connects or disconnects.
  * @param xStatus[in] Whether the operation was successful or not.
@@ -117,25 +144,37 @@ static void prvBLEConnectionCallback( BTStatus_t xStatus,
                              uint16_t usConnId,
                              bool xConnected,
                              BTBdaddr_t * pxBda );
+
+
 /**
  * @brief Callback invoked if advertisement started
  * @param xStatus[in] Status of the start advertisement operation.
  */
-static void prvStartAdvCallback( BTStatus_t xStatus );
-/**
- * @brief Callback invoked if advertisement data is set.
- * @param xStatus[in] Status of the set advertisement data operation.
- */
-static void prvSetAdvCallback( BTStatus_t xStatus );
 
-/**
- * @brief Callback invoked after the scan response is set.
- * @param xStatus[in] Status of scan response set operation.
- */
-static void prvSetScanRespCallback( BTStatus_t xStatus );
+static void prvStartAdvCallback( BTStatus_t xStatus );
+
+
 #endif
 
+
 #if WIFI_ENABLED
+
+NMNetworkInfo_t xWiFiNetworkInfo = _NETWORK_INFO_WIFI;
+
+/**
+ * @brief Function used to enable a WIFI network.
+ *
+ * @return true if WIFI is enabled successfully.
+ */
+static BaseType_t prxWIFIEnable( void );
+
+/**
+ * @brief Function used to disable a WIFI network.
+ *
+ * @return true if WIFI is disable successfully, false if already disabled
+ */
+static BaseType_t prxWIFIDisable( void );
+
 /**
  * @Brief Callback registered by network manager with WIFI layer for  connection state changes.
  * @param ulNetworkType Network type passed from WIFI
@@ -143,227 +182,131 @@ static void prvSetScanRespCallback( BTStatus_t xStatus );
  * @param pvContext User context passed as it is to the callback
  */
 static void prvWiFiConnectionCallback( uint32_t ulNetworkType, AwsIotNetworkState_t xState, void *pvContext );
-#if ( bleconfigENABLE_WIFI_PROVISIONING == 0 )
+
+#if ( IOT_BLE_ENABLE_WIFI_PROVISIONING == 0 )
 /**
  * Connects to the WIFI using credentials configured statically
  * @return true if connected successfully.
  */
-static bool prvWifiConnect( void );
-#endif
-#endif
-
-
-static StateChangeSubscriptionList_t xSubscriptionList =
-{
-        .xListHead = { 0 },
-        .xLock = NULL,
-        .xIsInit = false
-};
-static uint32_t ulEnabledNetworks = AWSIOT_NETWORK_TYPE_NONE;
-static uint32_t ulConnectedNetworks = AWSIOT_NETWORK_TYPE_NONE;
-static SemaphoreHandle_t xConnectionSemaphore = NULL;
-
-#if BLE_ENABLED
-static BTUuid_t xAdvUUID =
-{
-	.uu.uu128 = bleconfigDEVICE_INFO_SERVICE_UUID,
-	.ucType   = eBTuuidType128
-};
-static BLEAdvertismentParams_t xAdvParams =
-{
-    .bIncludeTxPower    = true,
-    .bIncludeName       = true,
-    .bSetScanRsp        = false,
-    .ulAppearance       = 0,
-    .ulMinInterval      = 0x20,
-    .ulMaxInterval      = 0x40,
-    .usServiceDataLen   = 0,
-    .pcServiceData      = NULL,
-    .usManufacturerLen  = 0,
-    .pcManufacturerData = NULL,
-    .pxUUID1           = &xAdvUUID,
-    .pxUUID2            = NULL
-};
+static BaseType_t prxWifiConnect( void );
 
 #endif
+#endif
+
+static void prvInvokeSubscription( uint32_t ulNetworkType, AwsIotNetworkState_t xNetworkEvent );
+
+static void prvUserCallbackRoutine( struct IotTaskPool * pTaskPool, struct IotTaskPoolJob * pJob, void * pUserContext );
+
+
+static NetworkManagerInfo_t xNetworkManagerInfo = { 0 };
+
 
 
 #if BLE_ENABLED
 
-static BTStatus_t prvBLEInit( void )
+BaseType_t _registerUnregisterCb(bool unRegister)
 {
-    BTStatus_t xStatus = eBTStatusSuccess;
-    BLEEventsCallbacks_t xEventCb;
-    BTUuid_t xServerUUID =
+    IotBleEventsCallbacks_t xEventCb;
+    BTStatus_t xStatus;
+    BaseType_t ret = pdFALSE;
+
+	xEventCb.pConnectionCb = prvBLEConnectionCallback;
+    if(unRegister == false)
     {
-        .ucType   = eBTuuidType128,
-        .uu.uu128 = bleconfigSERVER_UUID
-    };
-
-
-#if ( bleconfigENABLE_BONDING == 1 )
-    const bool bIsBondable = true;
-#else
-    const bool bIsBondable = false;
-#endif
-
-#if ( bleconfigENABLE_SECURE_CONNECTION == 1 )
-    const bool bSecureConnection = true;
-#else
-    const bool bSecureConnection = false;
-#endif
-    const uint32_t usMtu = bleconfigPREFERRED_MTU_SIZE;
-    const BTIOtypes_t xIO = eBTIODisplayYesNo;
-    size_t xNumProperties;
-    const BTInterface_t * pxIface;
-
-    BTProperty_t xDeviceProperties[] =
+		xStatus = IotBle_RegisterEventCb( eBLEConnection, xEventCb );
+    }else
     {
-        {
-            .xType = eBTpropertyBdname,
-            .xLen = strlen( bleconfigDEVICE_NAME ),
-            .pvVal = ( void * ) bleconfigDEVICE_NAME
-        },
-        {
-            .xType = eBTpropertyBondable,
-            .xLen = 1,
-            .pvVal = ( void * ) &bIsBondable
-        },
-		{
-			.xType = eBTpropertySecureConnectionOnly,
-			.xLen = 1,
-			.pvVal = ( void * ) &bSecureConnection
-		},
-		{
-			.xType = eBTpropertyIO,
-			.xLen = 1,
-			.pvVal = ( void * ) &xIO
-		},
-        {
-            .xType = eBTpropertyLocalMTUSize,
-            .xLen = 1,
-            .pvVal = ( void * ) &usMtu
-        }
-    };
-
-    xNumProperties = sizeof( xDeviceProperties ) / sizeof ( xDeviceProperties[0] );
-
-    if( xStatus == eBTStatusSuccess )
-    {
-    	pxIface = BTGetBluetoothInterface();
-    	if( pxIface  != NULL )
-    	{
-    		xStatus = pxIface->pxEnable(0);
-    	}
-    	else
-    	{
-    		xStatus = eBTStatusFail;
-    	}
-    }
-    /* Initialize BLE Middle ware */
-    if( xStatus == eBTStatusSuccess )
-    {
-        xStatus = BLE_Init( &xServerUUID, xDeviceProperties, xNumProperties );
+		xStatus = IotBle_UnRegisterEventCb( eBLEConnection, xEventCb );
     }
 
-    if( xStatus == eBTStatusSuccess )
-    {
-    	 xEventCb.pxGAPPairingStateChangedCb = &BLEGAPPairingStateChangedCb;
-    	 xStatus = BLE_RegisterEventCb( eBLEPairingStateChanged, xEventCb );
-    }
-
-#if ( bleconfigENABLE_NUMERIC_COMPARISON == 1 )
-    if( xStatus == eBTStatusSuccess )
-    {
-    	xEventCb.pxNumericComparisonCb = &BLENumericComparisonCb;
-    	xStatus = BLE_RegisterEventCb( eBLENumericComparisonCallback, xEventCb );
-    }
-#endif
-
-    /* Initialize BLE Services */
-    if( xStatus == eBTStatusSuccess )
-    {
-        /*Initialize bluetooth services */
-        if( BLE_SERVICES_Init() != pdPASS )
-        {
-            xStatus = eBTStatusFail;
-        }
-    }
-
-    return xStatus;
-}
-
-
-static bool prvBLEEnable( void )
-{
-	BLEEventsCallbacks_t xEventCb;
-	BaseType_t xRet = pdTRUE;
-
-	if( !( ulEnabledNetworks & AWSIOT_NETWORK_TYPE_BLE  ) )
+	xEventCb.pGAPPairingStateChangedCb = &BLEGAPPairingStateChangedCb;
+	if( xStatus == eBTStatusSuccess )
 	{
-		prvBLEInit();
-		/* Register BLE Connection callback */
-		if( xRet == pdTRUE )
+		if(unRegister == false)
 		{
-			xEventCb.pxConnectionCb = prvBLEConnectionCallback;
-			if( BLE_RegisterEventCb( eBLEConnection, xEventCb ) != eBTStatusSuccess )
-			{
-				xRet = pdFALSE;
-			}
-		}
-
-		if( xRet == pdTRUE )
+			xStatus = IotBle_RegisterEventCb( eBLEPairingStateChanged, xEventCb );
+		}else
 		{
-			xAdvParams.bSetScanRsp = false;
-			if( BLE_SetAdvData( BTAdvInd, &xAdvParams, prvSetAdvCallback ) != eBTStatusSuccess )
-			{
-				xRet = pdFALSE;
-			}
-		}
-
-		if( xRet == pdTRUE )
-		{
-                    ulEnabledNetworks |= AWSIOT_NETWORK_TYPE_BLE;
+			xStatus = IotBle_UnRegisterEventCb( eBLEPairingStateChanged, xEventCb );
 		}
 	}
 
-	return xRet;
+#if ( IOT_BLE_ENABLE_NUMERIC_COMPARISON == 1 )
+	xEventCb.pNumericComparisonCb = &BLENumericComparisonCb;
+	if( xStatus == eBTStatusSuccess )
+	{
+		if(unRegister == false)
+		{
+			xStatus = IotBle_RegisterEventCb( eBLENumericComparisonCallback, xEventCb );
+		}else
+		{
+			xStatus = IotBle_UnRegisterEventCb( eBLENumericComparisonCallback, xEventCb );
+		}
+	}
+#endif
+
+    if(xStatus == eBTStatusSuccess)
+    {
+    	ret = pdTRUE;
+    }
+
+    return ret;
+}
+
+static BaseType_t prxBLEEnable( void )
+{
+    BaseType_t xRet = pdTRUE;
+    static bool bInitBLE = false;
+    BTStatus_t xStatus;
+
+    if( bInitBLE == false )
+    {
+        xStatus = IotBle_Init();
+
+        if( xStatus == eBTStatusSuccess )
+        {
+            bInitBLE = true;
+        }
+    }
+    else
+    {
+        xStatus = IotBle_On();
+        IotBle_StartAdv(NULL);
+    }
+    /* Register BLE Connection callback */
+    _registerUnregisterCb(false);
+
+    if( xStatus != eBTStatusSuccess)
+    {
+    	xRet = pdFALSE;
+    }
+
+    return xRet;
 }
 
 /*-----------------------------------------------------------*/
-
-static bool prvBLEDisable( void )
+/* TODO make same function to registere/unregister or risk of memory leak. */
+static BaseType_t prxBLEDisable( void )
 {
-	bool xRet = true;
-	BLEEventsCallbacks_t xEventCb;
+    bool xRet = true;
 
-	if( ( ulEnabledNetworks & AWSIOT_NETWORK_TYPE_BLE ) == AWSIOT_NETWORK_TYPE_BLE )
-	{
-                ulEnabledNetworks &= ~AWSIOT_NETWORK_TYPE_BLE;
+    xRet = _registerUnregisterCb(true);
 
-		xEventCb.pxConnectionCb = prvBLEConnectionCallback;
-		if( BLE_UnRegisterEventCb( eBLEConnection, xEventCb ) != eBTStatusSuccess )
-		{
-			xRet = false;
-		}
+    if( xRet == true )
+    {
+        if( IotBle_StopAdv() != eBTStatusSuccess )
+        {
+            xRet = false;
+        }
+    }
 
-		if( xRet == true )
-		{
-			if( BLE_StopAdv() != eBTStatusSuccess )
-			{
-				xRet = false;
-			}
-		}
-
-		if( xRet == true )
-		{
-			if( BLE_OFF() != eBTStatusSuccess )
-			{
-				xRet = false;
-			}
-		}
-
-	}
+    if( xRet == true )
+    {
+        if( IotBle_Off() != eBTStatusSuccess )
+        {
+            xRet = false;
+        }
+    }
 
 	return xRet;
 }
@@ -372,96 +315,56 @@ static void prvStartAdvCallback( BTStatus_t xStatus )
 {
     if( xStatus == eBTStatusSuccess )
     {
-        AwsIotLogInfo ( "Started advertisement. Listening for a BLE Connection.\n" );
-    }
-}
-
-
-static void prvSetScanRespCallback( BTStatus_t xStatus )
-{
-    if( xStatus == eBTStatusSuccess )
-    {
-        AwsIotLogInfo( "Successfully set the scan Response data \n");
-        ( void ) BLE_StartAdv( prvStartAdvCallback );
-    }
-}
-
-
-static void prvSetAdvCallback( BTStatus_t xStatus )
-{
-    if( xStatus == eBTStatusSuccess )
-    {
-    	/* Set the scan response */
-    	xAdvParams.bSetScanRsp = true;
-        ( void ) BLE_SetAdvData( BTAdvInd, &xAdvParams, prvSetScanRespCallback );
+        IotLogInfo ( "Started advertisement. Listening for a BLE Connection.\n" );
     }
 }
 
 static void prvBLEConnectionCallback( BTStatus_t xStatus,
-                             uint16_t usConnId,
+                             uint16_t connId,
                              bool xConnected,
                              BTBdaddr_t * pxBda )
 {
 
+
+    AwsIotNetworkState_t xPrevState = xBLENetworkInfo.xNetworkState;
+
     if( xConnected == true )
     {
-    	AwsIotLogInfo ( "BLE Connected to remote device, connId = %d\n", usConnId );
-    	ulConnectedNetworks |= AWSIOT_NETWORK_TYPE_BLE;
-    	prvInvokeNetworkStateChangeCallbacks( AWSIOT_NETWORK_TYPE_BLE, eNetworkStateEnabled );
-        ( void ) xSemaphoreGive( xConnectionSemaphore );
-        BLE_StopAdv();
-
-
+        IotLogInfo ( "BLE Connected to remote device, connId = %d\n", connId );
+        IotBle_StopAdv();
+        xBLENetworkInfo.xNetworkState = eNetworkStateEnabled;
     }
     else
     {
-        AwsIotLogInfo ( "BLE disconnected with remote device, connId = %d \n", usConnId );
-        ulConnectedNetworks &= ~AWSIOT_NETWORK_TYPE_BLE;
-        prvInvokeNetworkStateChangeCallbacks( AWSIOT_NETWORK_TYPE_BLE, eNetworkStateDisabled );
-        if( ( ulEnabledNetworks &  AWSIOT_NETWORK_TYPE_BLE ) == AWSIOT_NETWORK_TYPE_BLE )
-        {
-            ( void ) BLE_StartAdv( prvStartAdvCallback );
-        }
+        IotLogInfo ( "BLE disconnected with remote device, connId = %d \n", connId );
 
+        if( xBLENetworkInfo.xNetworkState != eNetworkStateUnknown )
+        {
+            ( void ) IotBle_StartAdv( prvStartAdvCallback );
+            xBLENetworkInfo.xNetworkState = eNetworkStateDisabled;
+        }
+    }
+
+    if( xPrevState != xBLENetworkInfo.xNetworkState )
+    {
+        prvInvokeSubscription( xBLENetworkInfo.ulNetworkType, xBLENetworkInfo.xNetworkState  );
     }
 }
-
-#else
-
-static bool prvBLEEnable( void )
-{
-	return false;
-}
-
-static bool prvBLEDisable( void )
-{
-	return false;
-}
-
 #endif
 /*-----------------------------------------------------------*/
 
 #if WIFI_ENABLED
 static void prvWiFiConnectionCallback( uint32_t ulNetworkType, AwsIotNetworkState_t xState, void *pvContext )
 {
-    ( void ) ulNetworkType;
-    ( void ) pvContext;
-
-    if( xState == eNetworkStateEnabled )
+    if( xState != xWiFiNetworkInfo.xNetworkState )
     {
-        ulConnectedNetworks |= AWSIOT_NETWORK_TYPE_WIFI;
-        ( void ) xSemaphoreGive( xConnectionSemaphore );
+        xWiFiNetworkInfo.xNetworkState = xState;
+        prvInvokeSubscription( xWiFiNetworkInfo.ulNetworkType, xWiFiNetworkInfo.xNetworkState );
     }
-    else
-    {
-        ulConnectedNetworks &= ~ AWSIOT_NETWORK_TYPE_WIFI;
-    }
-
-    prvInvokeNetworkStateChangeCallbacks( AWSIOT_NETWORK_TYPE_WIFI, xState );
 }
 
-#if ( bleconfigENABLE_WIFI_PROVISIONING == 0 )
-static bool prvWifiConnect( void )
+#if ( IOT_BLE_ENABLE_WIFI_PROVISIONING == 0 )
+static BaseType_t prxWifiConnect( void )
 {
     WIFINetworkParams_t xNetworkParams;
     WIFIReturnCode_t xWifiStatus;
@@ -480,97 +383,136 @@ static bool prvWifiConnect( void )
 #endif
 
 
-static bool prvWIFIEnable( void )
+static BaseType_t prxWIFIEnable( void )
 {
-    bool xRet = false;
+    BaseType_t xRet = pdFALSE;
 
-    if( !( ulEnabledNetworks & AWSIOT_NETWORK_TYPE_WIFI  ) )
+    if( WIFI_On() == eWiFiSuccess )
     {
+        xRet = pdTRUE;
+    }
 
-        if( WIFI_On() == eWiFiSuccess )
+    if( xRet == pdTRUE )
+    {
+        if( WIFI_RegisterStateChangeCallback( prvWiFiConnectionCallback, NULL ) != eWiFiSuccess )
+        {
+            xRet = pdFALSE;
+        }
+    }
+
+#if ( IOT_BLE_ENABLE_WIFI_PROVISIONING == 0 )
+    if( xRet == pdTRUE )
+    {
+        xRet = prxWifiConnect();
+    }
+#else
+    if ( xRet == pdTRUE )
+    {
+        xRet = IotBleWifiProv_Start();
+    }
+    if( xRet == pdTRUE )
+    {
+        xRet = xWiFiConnectTaskInitialize();
+    }
+#endif
+
+    return xRet;
+}
+
+static BaseType_t prxWIFIDisable( void )
+{
+    BaseType_t xRet = pdFALSE;
+
+#if ( IOT_BLE_ENABLE_WIFI_PROVISIONING == 1 )
+    vWiFiConnectTaskDestroy();
+#endif
+
+    if( WIFI_IsConnected() == pdTRUE )
+    {
+        if( WIFI_Disconnect() == eWiFiSuccess )
         {
             xRet = true;
         }
-
-        if( xRet == true )
-        {
-            if( WIFI_RegisterStateChangeCallback( prvWiFiConnectionCallback, NULL ) != eWiFiSuccess )
-            {
-                xRet = false;
-            }
-        }
-
-#if ( bleconfigENABLE_WIFI_PROVISIONING == 0 )
-        if( xRet == true )
-        {
-            xRet = prvWifiConnect();
-        }
-#else
-        WIFI_PROVISION_Start();
-#endif
-
-        if( xRet == true )
-        {
-            ulEnabledNetworks |= AWSIOT_NETWORK_TYPE_WIFI;
-        }
-
-
     }
-    return xRet;
-}
-static bool prvWIFIDisable( void )
-{
-    bool xRet = false;
-    if( ( ulEnabledNetworks & AWSIOT_NETWORK_TYPE_WIFI  ) == AWSIOT_NETWORK_TYPE_WIFI )
+    if( xRet == true )
     {
-        if( WIFI_IsConnected() == pdTRUE )
+        if( WIFI_Off() != eWiFiSuccess )
         {
-            if( WIFI_Disconnect() == eWiFiSuccess )
-            {
-                xRet = true;
-            }
-        }
-        if( xRet == true )
-        {
-            if( WIFI_Off() != eWiFiSuccess )
-            {
-                xRet = false;
-            }
+            xRet = false;
         }
     }
 
     return xRet;
-}
-
-#else
-static bool prvWIFIEnable( void )
-{
-	return false;
-}
-static bool prvWIFIDisable( void )
-{
-	return false;
 }
 
 #endif
 
 /*-----------------------------------------------------------*/
 
-static void prvInvokeNetworkStateChangeCallbacks( uint32_t ulNetworkType, AwsIotNetworkState_t xState )
+static void prvInvokeSubscription( uint32_t ulNetworkType, AwsIotNetworkState_t xNetworkEvent )
 {
-	Link_t *pxLink;
-	StateChangeSubscription_t* pxSubscription;
+    uint16_t usIdx;
+    IotTaskPoolError_t xError = IOT_TASKPOOL_NO_MEMORY;
+    IotTaskPoolJobStatus_t xTaskStatus;
+    NMCallbackExecutionContext_t *pxTask;
 
-	( void ) xSemaphoreTake(xSubscriptionList.xLock, portMAX_DELAY );
-	listFOR_EACH( pxLink, &xSubscriptionList.xListHead )
-	{
-		pxSubscription = listCONTAINER( pxLink, StateChangeSubscription_t, xSubscriptionList );
-		if( ( pxSubscription->ulNetworkTypes & ulNetworkType ) == ulNetworkType )
-		{
-			pxSubscription->xCallback( ulNetworkType, xState, pxSubscription->pvContext );
-		}
-	}
-	( void ) xSemaphoreGive(xSubscriptionList.xLock );
+    /* Search for a free job. */
+    for( usIdx = 0; usIdx < _MAX_CONCURRENT_JOBS; usIdx++ )
+    {
+        pxTask = &( xNetworkManagerInfo.xJobs[usIdx] );
+        ( void ) IotTaskPool_GetStatus( xNetworkManagerInfo.pxTaskPool, &pxTask->xJob, &xTaskStatus );
+        if( xTaskStatus == IOT_TASKPOOL_STATUS_READY )
+        {
+        	pxTask->ulNetworkType = ulNetworkType;
+        	pxTask->xNewtorkEvent = xNetworkEvent;
+        	pxTask->pvUserContext = pxTask;
+
+            xError = IotTaskPool_Schedule( xNetworkManagerInfo.pxTaskPool, &pxTask->xJob, 0 );
+            break;
+        }
+    }
+
+    if(xError != IOT_TASKPOOL_SUCCESS)
+    {
+    	if(usIdx != _MAX_CONCURRENT_JOBS)
+    	{
+    		IotLogError(" Could not invoke subscription, error %d returned. \n", xError);
+    	}else
+    	{
+    		IotLogError(" Could not invoke subscription, no job were ready.\n", xError);
+    	}
+    }
+}
+
+
+
+static void prvUserCallbackRoutine( struct IotTaskPool * pTaskPool, struct IotTaskPoolJob * pJob, void * pUserContext )
+{
+    Link_t* pxLink = NULL;
+    NMSubscription_t* pxSubscription = NULL;
+    NMCallbackExecutionContext_t* pxContext = ( NMCallbackExecutionContext_t* ) pUserContext;
+    IotTaskPoolError_t xError = IOT_TASKPOOL_NO_MEMORY;
+
+    configASSERT( pxContext != NULL );
+
+    ( void ) xSemaphoreTake( xNetworkManagerInfo.xSubscriptionLock, portMAX_DELAY );
+    listFOR_EACH( pxLink, &xNetworkManagerInfo.xSubscriptionListHead )
+    {
+        pxSubscription = listCONTAINER( pxLink, NMSubscription_t, xSubscriptionList );
+        pxSubscription->xUserCallback(pxContext->ulNetworkType, pxContext->xNewtorkEvent, pxSubscription->pvUserContext);
+
+    }
+
+    /* Job completed, ready again to be used. */
+    xError = IotTaskPool_CreateJob( prvUserCallbackRoutine,
+    		                                pxContext,
+											&pxContext->xJob );
+    if(xError != IOT_TASKPOOL_SUCCESS)
+    {
+    	IotLogError(" Could not invoke subscription, error %d returned \n", xError);
+    }
+
+    ( void ) xSemaphoreGive( xNetworkManagerInfo.xSubscriptionLock );
 }
 
 /*-----------------------------------------------------------*/
@@ -578,159 +520,240 @@ static void prvInvokeNetworkStateChangeCallbacks( uint32_t ulNetworkType, AwsIot
 
 BaseType_t AwsIotNetworkManager_Init( void )
 {
-	BaseType_t xRet = pdFALSE;
+    BaseType_t xRet = pdTRUE;
+    NMCallbackExecutionContext_t *pxTask;
+    uint16_t usIdx;
+    IotTaskPoolError_t xError = IOT_TASKPOOL_NO_MEMORY;
 
-	if( !xSubscriptionList.xIsInit )
-	{
-		xSubscriptionList.xLock = xSemaphoreCreateMutex();
-		if( xSubscriptionList.xLock != NULL )
-		{
-			listINIT_HEAD( &xSubscriptionList.xListHead );
-			xRet = pdTRUE;
-		}
 
-                if( xRet == pdTRUE )
-                {
-                    xConnectionSemaphore = xSemaphoreCreateBinary();
-                    if( xConnectionSemaphore != NULL )
-                    {
-                        xRet = pdTRUE;
-                    }
-                }
+    if( !xNetworkManagerInfo.xIsInit )
+    {
+        xNetworkManagerInfo.xSubscriptionLock = xSemaphoreCreateMutex();
 
-                if( xRet == pdTRUE )
-                {
-                    xSubscriptionList.xIsInit = true;
-                }
-	}
+        if( xNetworkManagerInfo.xSubscriptionLock == NULL )
+        {
+            xRet = pdFALSE;
+        }
 
-	return xRet;
+        if( xRet == pdTRUE )
+        {
+			/* Set all job to ready at initialization. */
+			for( usIdx = 0; usIdx < _MAX_CONCURRENT_JOBS; usIdx++ )
+			{
+				pxTask = &( xNetworkManagerInfo.xJobs[usIdx] );
+
+				xError = IotTaskPool_CreateJob( prvUserCallbackRoutine,
+														pxTask,
+														&pxTask->xJob );
+				if(xError != IOT_TASKPOOL_SUCCESS)
+				{
+					xRet = pdFALSE;
+					IotLogError(" Could not initialize task pool job array, error %d returned \n", xError);
+					break;
+				}
+			}
+        }
+
+        if( xRet == pdTRUE )
+        {
+            xNetworkManagerInfo.pxTaskPool = IOT_SYSTEM_TASKPOOL;
+            if( xNetworkManagerInfo.pxTaskPool == NULL )
+            {
+                xRet = pdFALSE;
+            }
+        }
+
+        if( xRet == pdTRUE )
+        {
+            listINIT_HEAD( &xNetworkManagerInfo.xSubscriptionListHead );
+            listINIT_HEAD( &xNetworkManagerInfo.xNetworkListHead );
+
+#if BLE_ENABLED
+            listADD( &xNetworkManagerInfo.xNetworkListHead, &xBLENetworkInfo.xNetworkList );
+#endif
+#if WIFI_ENABLED
+            listADD( &xNetworkManagerInfo.xNetworkListHead, &xWiFiNetworkInfo.xNetworkList );
+#endif
+
+            xNetworkManagerInfo.xIsInit = pdTRUE;
+        }
+        else
+        {
+            if( xNetworkManagerInfo.xSubscriptionLock != NULL )
+            {
+                vSemaphoreDelete( xNetworkManagerInfo.xSubscriptionLock );
+            }
+        }
+
+    }
+    return xRet;
 }
 
 BaseType_t AwsIotNetworkManager_SubscribeForStateChange( uint32_t ulNetworkTypes, AwsIotNetworkStateChangeCb_t xCallback, void * pvContext, SubscriptionHandle_t* pxHandle  )
 {
-	BaseType_t xRet = pdFALSE;
-	StateChangeSubscription_t* pxSubscription;
+    BaseType_t xRet = pdFALSE;
+    NMSubscription_t* pxSubscription;
 
+    if( xNetworkManagerInfo.xIsInit )
+    {
+        pxSubscription = pvPortMalloc( sizeof( NMSubscription_t ) );
+        if( pxSubscription != NULL )
+        {
+            pxSubscription->ulNetworkTypes = ulNetworkTypes;
+            pxSubscription->pvUserContext = pvContext;
+            pxSubscription->xUserCallback = xCallback;
 
-	if( xSubscriptionList.xIsInit )
-	{
-		pxSubscription = pvPortMalloc( sizeof( StateChangeSubscription_t ) );
-		if( pxSubscription != NULL )
-		{
-			pxSubscription->xCallback = xCallback;
-			pxSubscription->ulNetworkTypes = ulNetworkTypes;
-			pxSubscription->pvContext = pvContext;
-
-			( void ) xSemaphoreTake(xSubscriptionList.xLock, portMAX_DELAY );
-			listADD( &xSubscriptionList.xListHead, &pxSubscription->xSubscriptionList );
-			( void ) xSemaphoreGive( xSubscriptionList.xLock );
-			*pxHandle = ( SubscriptionHandle_t ) pxSubscription;
-			xRet = pdTRUE;
-		}
-		else
-		{
-			AwsIotLogInfo(" Not enough memory to add new subscription \n");
-		}
-	}
-	else
-	{
-		AwsIotLogInfo( "Subscription List not initialized \n");
-	}
-	return xRet;
+            ( void ) xSemaphoreTake(xNetworkManagerInfo.xSubscriptionLock, portMAX_DELAY );
+            listADD( &xNetworkManagerInfo.xSubscriptionListHead, &pxSubscription->xSubscriptionList );
+            ( void ) xSemaphoreGive( xNetworkManagerInfo.xSubscriptionLock );
+            *pxHandle = ( SubscriptionHandle_t ) pxSubscription;
+            xRet = pdTRUE;
+        }
+        else
+        {
+            IotLogInfo(" Not enough memory to add new subscription \n");
+        }
+    }
+    else
+    {
+        IotLogInfo( "Subscription List not initialized \n");
+    }
+    return xRet;
 }
 
 BaseType_t AwsIotNetworkManager_RemoveSubscription(  SubscriptionHandle_t xHandle )
 {
-	BaseType_t xRet = pdFALSE;
-	StateChangeSubscription_t* ppxSubscription, *pxListItem;
-	Link_t* pxLink;
+    BaseType_t xRet = pdFALSE;
+    NMSubscription_t* ppxSubscription, *pxListItem;
+    Link_t* pxLink;
 
-	if( xSubscriptionList.xIsInit )
-	{
-                ppxSubscription = ( StateChangeSubscription_t* ) xHandle;
-		( void ) xSemaphoreTake( xSubscriptionList.xLock, portMAX_DELAY );
-		listFOR_EACH( pxLink, &xSubscriptionList.xListHead )
-		{
-			pxListItem = listCONTAINER( pxLink, StateChangeSubscription_t, xSubscriptionList );
-			if( pxListItem == ppxSubscription )
-			{
-				listREMOVE( pxLink );
-				vPortFree( ppxSubscription );
-				xRet = pdTRUE;
-                                break;
-			}
+    if( xNetworkManagerInfo.xIsInit )
+    {
+        ppxSubscription = ( NMSubscription_t* ) xHandle;
+        ( void ) xSemaphoreTake( xNetworkManagerInfo.xSubscriptionLock, portMAX_DELAY );
+        listFOR_EACH( pxLink, &xNetworkManagerInfo.xSubscriptionListHead )
+        {
+            pxListItem = listCONTAINER( pxLink, NMSubscription_t, xSubscriptionList );
+            if( pxListItem == ppxSubscription )
+            {
+                listREMOVE( pxLink );
+                vPortFree( ppxSubscription );
+                xRet = pdTRUE;
+                break;
+            }
 
-		}
-		( void ) xSemaphoreGive( xSubscriptionList.xLock );
-	}
+        }
+        ( void ) xSemaphoreGive( xNetworkManagerInfo.xSubscriptionLock );
+    }
 
-	return xRet;
+    return xRet;
 }
-
 
 uint32_t AwsIotNetworkManager_GetConfiguredNetworks( void )
 {
-	return configENABLED_NETWORKS;
+    Link_t* pxLink;
+    NMNetworkInfo_t* pxNetwork;
+    uint32_t ulRet = AWSIOT_NETWORK_TYPE_NONE;
+    listFOR_EACH( pxLink, &xNetworkManagerInfo.xNetworkListHead )
+    {
+        pxNetwork = listCONTAINER( pxLink, NMNetworkInfo_t, xNetworkList );
+        ulRet |= pxNetwork->ulNetworkType;
+    }
+    return ulRet;
+}
+
+uint32_t AwsIotNetworkManager_GetEnabledNetworks( void )
+{
+    Link_t* pxLink;
+    NMNetworkInfo_t* pxNetwork;
+    uint32_t ulRet = AWSIOT_NETWORK_TYPE_NONE;
+    listFOR_EACH( pxLink, &xNetworkManagerInfo.xNetworkListHead )
+    {
+        pxNetwork = listCONTAINER( pxLink, NMNetworkInfo_t, xNetworkList );
+        if( pxNetwork->xNetworkState != eNetworkStateUnknown )
+        {
+            ulRet |= pxNetwork->ulNetworkType;
+        }
+    }
+
+    return ulRet;
 }
 
 uint32_t AwsIotNetworkManager_GetConnectedNetworks( void )
 {
-    return ulConnectedNetworks;
-}
-
-uint32_t AwsIotNetworkManager_WaitForNetworkConnection( void )
-{
-    if( ulConnectedNetworks == AWSIOT_NETWORK_TYPE_NONE )
+    Link_t* pxLink;
+    NMNetworkInfo_t* pxNetwork;
+    uint32_t ulRet = AWSIOT_NETWORK_TYPE_NONE;
+    listFOR_EACH( pxLink, &xNetworkManagerInfo.xNetworkListHead )
     {
-        ( void ) xSemaphoreTake( xConnectionSemaphore, portMAX_DELAY );
+        pxNetwork = listCONTAINER( pxLink, NMNetworkInfo_t, xNetworkList );
+        if( pxNetwork->xNetworkState == eNetworkStateEnabled )
+        {
+            ulRet |= pxNetwork->ulNetworkType;
+        }
     }
-    return ulConnectedNetworks;
-}
 
+    return ulRet;
+}
 
 uint32_t AwsIotNetworkManager_EnableNetwork( uint32_t ulNetworkTypes )
 {
-    uint32_t ulEnabled = AWSIOT_NETWORK_TYPE_NONE;
+    uint32_t ulRet = AWSIOT_NETWORK_TYPE_NONE;
 
-    if( ( ulNetworkTypes & AWSIOT_NETWORK_TYPE_BLE ) == AWSIOT_NETWORK_TYPE_BLE )
+#if BLE_ENABLED
+    if( ( ( ulNetworkTypes & AWSIOT_NETWORK_TYPE_BLE ) == AWSIOT_NETWORK_TYPE_BLE ) &&
+           ( xBLENetworkInfo.xNetworkState == eNetworkStateUnknown ) )
     {
-        if( prvBLEEnable() == true )
+        xBLENetworkInfo.xNetworkState = eNetworkStateDisabled;
+        if( prxBLEEnable() == pdTRUE )
         {
-            ulEnabled |= AWSIOT_NETWORK_TYPE_BLE;
+            ulRet |= AWSIOT_NETWORK_TYPE_BLE;
         }
     }
+#endif
 
-    if( ( ulNetworkTypes & AWSIOT_NETWORK_TYPE_WIFI ) == AWSIOT_NETWORK_TYPE_WIFI )
+#if WIFI_ENABLED
+
+    if( ( ( ulNetworkTypes & AWSIOT_NETWORK_TYPE_WIFI ) == AWSIOT_NETWORK_TYPE_WIFI ) &&
+           ( xWiFiNetworkInfo.xNetworkState == eNetworkStateUnknown ) )
     {
-        if( prvWIFIEnable() == true )
+        xWiFiNetworkInfo.xNetworkState = eNetworkStateDisabled;
+        if( prxWIFIEnable() == pdTRUE )
         {
-            ulEnabled  |= AWSIOT_NETWORK_TYPE_WIFI;
+            ulRet |= AWSIOT_NETWORK_TYPE_WIFI;
         }
     }
+#endif
 
-
-    return ulEnabled;
+    return ulRet;
 }
 
 uint32_t AwsIotNetworkManager_DisableNetwork( uint32_t ulNetworkTypes )
 {
-	uint32_t ulDisabled = AWSIOT_NETWORK_TYPE_NONE;
+    uint32_t ulRet = AWSIOT_NETWORK_TYPE_NONE;
 
-	if( ( ulNetworkTypes & AWSIOT_NETWORK_TYPE_WIFI ) == AWSIOT_NETWORK_TYPE_WIFI )
-	{
-		if( prvWIFIDisable() == true )
-		{
-			ulDisabled  |= AWSIOT_NETWORK_TYPE_WIFI;
-		}
-	}
-	if( ( ulNetworkTypes & AWSIOT_NETWORK_TYPE_BLE ) == AWSIOT_NETWORK_TYPE_BLE )
-	{
-		if( prvBLEDisable() == true )
-		{
-			ulDisabled |= AWSIOT_NETWORK_TYPE_BLE;
-		}
-	}
+#if WIFI_ENABLED
+    if( ( ( ulNetworkTypes & AWSIOT_NETWORK_TYPE_WIFI ) == AWSIOT_NETWORK_TYPE_WIFI ) &&
+           ( xWiFiNetworkInfo.xNetworkState != eNetworkStateUnknown ) )
+    {
+        if( prxWIFIDisable() == pdTRUE )
+        {
+            xWiFiNetworkInfo.xNetworkState = eNetworkStateUnknown;
+            ulRet  |= AWSIOT_NETWORK_TYPE_WIFI;
+        }
+    }
+#endif
 
-	return ulDisabled;
+#if BLE_ENABLED
+    if( ( ( ulNetworkTypes & AWSIOT_NETWORK_TYPE_BLE ) == AWSIOT_NETWORK_TYPE_BLE ) &&
+           ( xBLENetworkInfo.xNetworkState != eNetworkStateUnknown ) )
+    {
+        if( prxBLEDisable() == pdTRUE )
+        {
+            xBLENetworkInfo.xNetworkState = eNetworkStateUnknown;
+            ulRet |= AWSIOT_NETWORK_TYPE_BLE;
+        }
+    }
+#endif
+    return ulRet;
 }

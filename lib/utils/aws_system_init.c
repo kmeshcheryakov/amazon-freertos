@@ -22,8 +22,14 @@
  * http://aws.amazon.com/freertos
  * http://www.FreeRTOS.org
  */
+#ifdef IOT_CONFIG_FILE
+    #include IOT_CONFIG_FILE
+#endif
+
 #include "FreeRTOS.h"
 #include "aws_system_init.h"
+
+#include "iot_common.h"
 
 /* Library code. */
 extern BaseType_t MQTT_AGENT_Init( void );
@@ -35,7 +41,7 @@ extern BaseType_t IotMetrics_Init( void );
 /**
  * @brief Initializes Amazon FreeRTOS libraries.
  */
-BaseType_t SYSTEM_Init()
+BaseType_t SYSTEM_Init( void )
 {
     BaseType_t xResult = pdPASS;
 
@@ -49,6 +55,11 @@ BaseType_t SYSTEM_Init()
     if( xResult == pdPASS )
     {
         xResult = IotMetrics_Init();
+    }
+
+    if( xResult == pdPASS )
+    {
+        xResult = ( IotCommon_Init() == true );
     }
 
     return xResult;

@@ -35,8 +35,12 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  * of the real work; checking to see if the message topic is one destined for
  * the OTA agent. If not, it is simply ignored.
  */
+#ifdef IOT_CONFIG_FILE
+    #include IOT_CONFIG_FILE
+#endif
+
 /* MQTT include. */
-#include "aws_iot_mqtt.h"
+#include "iot_mqtt.h"
 /* Standard includes. */
 #include <stdio.h>
 #include <string.h>
@@ -57,13 +61,17 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 /* Amazon FreeRTOS OTA agent includes. */
 #include "aws_ota_agent.h"
 
-#include "aws_iot_network.h"
+#include "aws_iot_network_manager.h"
 /* Required for demo task stack and priority */
 #include "aws_ota_update_demo.h"
 #include "aws_demo_config.h"
 #include "aws_application_version.h"
 
 static void App_OTACompleteCallback(OTA_JobEvent_t eEvent );
+
+static BaseType_t prxCreateNetworkConnection( void );
+static IotNetworkError_t prvNetworkDisconnectCallback( void* pvContext );
+static void prvNetworkStateChangeCallback( uint32_t ulNetworkType, AwsIotNetworkState_t xNetworkState, void* pvContext );
 
 /*-----------------------------------------------------------*/
 
@@ -77,10 +85,95 @@ static void App_OTACompleteCallback(OTA_JobEvent_t eEvent );
 
 #define myappONE_SECOND_DELAY_IN_TICKS  pdMS_TO_TICKS( 1000UL )
 
-static AwsIotMqttNetIf_t xNetworkInterface = AWS_IOT_MQTT_NETIF_INITIALIZER;
-static AwsIotDemoNetworkConnection_t xNetworkConnection = NULL;
-static AwsIotMqttConnection_t xMqttConnection = AWS_IOT_MQTT_CONNECTION_INITIALIZER;
+#define otaDemoNETWORK_TYPES               ( AWSIOT_NETWORK_TYPE_BLE | AWSIOT_NETWORK_TYPE_WIFI )
 
+/**
+ * @brief Structure which holds the context for an MQTT connection within Demo.
+ */
+static MqttConnectionContext_t xConnection =
+{
+     .pvNetworkConnection = NULL,
+     .ulNetworkType       = AWSIOT_NETWORK_TYPE_NONE,
+     .xNetworkInfo   = IOT_MQTT_NETWORK_INFO_INITIALIZER,
+     .xMqttConnection     = IOT_MQTT_CONNECTION_INITIALIZER,
+     .xDisconnectCallback = prvNetworkDisconnectCallback
+};
+
+/**
+ * @brief Network manager subscription callback.
+ */
+
+static SubscriptionHandle_t xSubscriptionHandle = AWSIOT_NETWORK_SUBSCRIPTION_HANDLE_INITIALIZER;
+
+/**
+ * @brief Semaphore to indicate a new network is available.
+ */
+static SemaphoreHandle_t xNetworkAvailableLock = NULL;
+
+/**
+ * @brief Flag used to unset, during disconnection of currently connected network. This will
+ * trigger a reconnection from the main MQTT task.
+ */
+static BaseType_t xNetworkConnected = pdFALSE;
+
+static void prvNetworkStateChangeCallback( uint32_t ulNetworkType, AwsIotNetworkState_t xNetworkState, void* pvContext )
+{
+    if( xNetworkState == eNetworkStateEnabled )
+    {
+        /* Release the semaphore, to indicate other tasks that a network is available */
+        xSemaphoreGive( xNetworkAvailableLock );
+    }
+    else if ( xNetworkState == eNetworkStateDisabled )
+    {
+        if( ( AwsIotNetworkManager_GetConnectedNetworks()
+                & otaDemoNETWORK_TYPES ) == AWSIOT_NETWORK_TYPE_NONE )
+        {
+            /* Take the semaphore if not taken already */
+            xSemaphoreTake( xNetworkAvailableLock, 0 );
+        }
+
+        /* If the publish task is already connected to this network, set connected network flag to none,
+         * to trigger a reconnect.
+         */
+        if( xConnection.ulNetworkType == ulNetworkType )
+        {
+            xNetworkConnected = pdFALSE;
+        }
+    }
+}
+
+
+static IotNetworkError_t prvNetworkDisconnectCallback( void* pvContext )
+{
+    ( void ) pvContext;
+    xNetworkConnected = pdFALSE;
+
+    return IOT_NETWORK_SUCCESS;
+}
+
+static BaseType_t prxCreateNetworkConnection( void )
+{
+
+    BaseType_t xRet = pdFALSE;
+
+    /* If no networks are available, block for a physical network connection */
+    if( ( AwsIotNetworkManager_GetConnectedNetworks()
+            & otaDemoNETWORK_TYPES ) == AWSIOT_NETWORK_TYPE_NONE )
+    {
+        /* Block for a Network Connection. */
+        configPRINTF(( "Waiting for a network connection.\r\n" ));
+        xSemaphoreTake( xNetworkAvailableLock, portMAX_DELAY );
+    }
+
+    /* At least one network type is available. Connect to the network type. */
+    xRet = xMqttDemoCreateNetworkConnection(
+            &xConnection,
+            otaDemoNETWORK_TYPES,
+            echoCONN_RETRY_INTERVAL_SECONDS,
+            echoCONN_RETRY_LIMIT );
+
+    return xRet;
+}
 
 static const char *pcStateStr[eOTA_NumAgentStates] =
 {
@@ -92,7 +185,7 @@ static const char *pcStateStr[eOTA_NumAgentStates] =
 
 void vOTAUpdateDemoTask( void * pvParameters )
 {
-    AwsIotMqttConnectInfo_t xConnectInfo = AWS_IOT_MQTT_CONNECT_INFO_INITIALIZER;                                                                                                                                                                                                                                                                                                                              
+    IotMqttConnectInfo_t xConnectInfo = IOT_MQTT_CONNECT_INFO_INITIALIZER;                                                                                                                                                                                                                                                                                                                              
     OTA_State_t eState;
 
 /* Remove compiler warnings about unused parameters. */
@@ -106,22 +199,16 @@ void vOTAUpdateDemoTask( void * pvParameters )
 
     /* Create the MQTT Client. */
                                                                                                                                                                                                                      
-    AwsIotDemo_CreateNetworkConnection(
-            &xNetworkInterface,
-            &xMqttConnection,
-            NULL,
-            &xNetworkConnection,
-            echoCONN_RETRY_INTERVAL_SECONDS,
-            echoCONN_RETRY_LIMIT );
+    xNetworkConnected = prxCreateNetworkConnection();
 
 
-    if( xNetworkConnection != NULL )
+    if( xNetworkConnected  )
     {
         for ( ; ; )
         {
             configPRINTF( ( "Connecting to broker...\r\n" ) );
             memset( &xConnectInfo, 0, sizeof( xConnectInfo ) );
-            if( AwsIotDemo_GetNetworkType( xNetworkConnection ) == AWSIOT_NETWORK_TYPE_BLE )
+            if( xConnection.ulNetworkType == AWSIOT_NETWORK_TYPE_BLE )
             {
                 xConnectInfo.awsIotMqttMode = false;
                 xConnectInfo.keepAliveSeconds = 0;
@@ -136,14 +223,12 @@ void vOTAUpdateDemoTask( void * pvParameters )
             xConnectInfo.clientIdentifierLength = strlen( clientcredentialIOT_THING_NAME );
             xConnectInfo.pClientIdentifier = clientcredentialIOT_THING_NAME;
             /* Connect to the broker. */
-            if( AwsIotMqtt_Connect( &xMqttConnection,
-                &xNetworkInterface,
+            if( IotMqtt_Connect( &( xConnection.xNetworkInfo ),
                 &xConnectInfo,
-                NULL,
-                otademoCONN_TIMEOUT_MS ) == AWS_IOT_MQTT_SUCCESS )
+                otademoCONN_TIMEOUT_MS,&( xConnection.xMqttConnection ) ) == IOT_MQTT_SUCCESS )
             {
                 configPRINTF( ( "Connected to broker.\r\n" ) );
-                OTA_AgentInit( xMqttConnection, ( const uint8_t * ) ( clientcredentialIOT_THING_NAME ), App_OTACompleteCallback, ( TickType_t ) ~0 );
+                OTA_AgentInit( xConnection.xMqttConnection, ( const uint8_t * ) ( clientcredentialIOT_THING_NAME ), App_OTACompleteCallback, ( TickType_t ) ~0 );
 
                 while( ( eState = OTA_GetAgentState() ) != eOTA_AgentState_NotReady )
                 {
@@ -152,7 +237,7 @@ void vOTAUpdateDemoTask( void * pvParameters )
                     configPRINTF( ( "State: %s  Received: %u   Queued: %u   Processed: %u   Dropped: %u\r\n", pcStateStr[eState],
                             OTA_GetPacketsReceived(), OTA_GetPacketsQueued(), OTA_GetPacketsProcessed(), OTA_GetPacketsDropped() ) );
                 }
-                AwsIotMqtt_Disconnect(xMqttConnection, false);
+                IotMqtt_Disconnect( xConnection.xMqttConnection, false);
             }
             else
             {
@@ -222,10 +307,63 @@ static void App_OTACompleteCallback( OTA_JobEvent_t eEvent )
 
 void vStartOTAUpdateDemoTask( void )
 {
-    xTaskCreate( vOTAUpdateDemoTask,
-                 "OTA",
-                 democonfigOTA_UPDATE_TASK_STACK_SIZE,
-                 NULL,
-                 democonfigOTA_UPDATE_TASK_TASK_PRIORITY,
-                 NULL );
+    BaseType_t xRet = pdTRUE;
+
+    if( otaDemoNETWORK_TYPES == AWSIOT_NETWORK_TYPE_NONE )
+    {
+        configPRINTF(( "There are no networks configured for the demo.\r\n" ));
+        xRet = pdFALSE;
+    }
+
+    /* Create semaphore to notify network available */
+    if( xRet == pdTRUE )
+    {
+        xNetworkAvailableLock = xSemaphoreCreateBinary();
+        if( xNetworkAvailableLock == NULL )
+        {
+            configPRINTF(( "Failed to create semaphore.\r\n" ));
+            xRet = pdFALSE;
+        }
+    }
+
+    /**
+     * Create a Network Manager Subscription for all the network types supported.
+     */
+    if( xRet == pdTRUE )
+    {
+        xRet = AwsIotNetworkManager_SubscribeForStateChange( otaDemoNETWORK_TYPES, prvNetworkStateChangeCallback, NULL, &xSubscriptionHandle );
+        if( xRet == pdFALSE )
+        {
+            configPRINTF(( "Failed to create Network Manager subscription.\r\n" ));
+        }
+    }
+
+    if( xRet == pdTRUE )
+    {
+        xRet = xTaskCreate( vOTAUpdateDemoTask,
+                     "OTA",
+                     democonfigOTA_UPDATE_TASK_STACK_SIZE,
+                     NULL,
+                     democonfigOTA_UPDATE_TASK_TASK_PRIORITY,
+                     NULL );
+
+        if( xRet == pdFALSE )
+        {
+            configPRINTF(( "Failed to create OTA demo tasks.\r\n" ));
+        }
+
+    }
+
+    if(  xRet == pdFALSE )
+    {
+        if( xSubscriptionHandle != AWSIOT_NETWORK_SUBSCRIPTION_HANDLE_INITIALIZER )
+        {
+            AwsIotNetworkManager_RemoveSubscription( xSubscriptionHandle );
+        }
+
+        if( xNetworkAvailableLock != NULL )
+        {
+            vSemaphoreDelete( xNetworkAvailableLock );
+        }
+    }
 }

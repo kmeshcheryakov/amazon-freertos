@@ -31,8 +31,7 @@
  * The file implements the encoder interface in aws_iot_serialize.h.
  */
 
-#include "FreeRTOS.h"
-#include "aws_iot_serializer.h"
+#include "iot_serializer.h"
 #include "cbor.h"
 
 /* Translate cbor error to serializer error. */
@@ -135,7 +134,7 @@ static AwsIotSerializerError_t _init( AwsIotSerializerEncoderObject_t * pEncoder
     /* Unused flags for tinycbor init. */
     int unusedCborFlags = 0;
 
-    CborEncoder * pCborEncoder = pvPortMalloc( sizeof( CborEncoder ) );
+    CborEncoder * pCborEncoder = AwsIotSerializer_MallocCborEncoder( sizeof( CborEncoder ) );
 
     if( pCborEncoder != NULL )
     {
@@ -165,7 +164,7 @@ static void _destroy( AwsIotSerializerEncoderObject_t * pEncoderObject )
     CborEncoder * pCborEncoder = ( CborEncoder * ) pEncoderObject->pHandle;
 
     /* Free the memorry allocated in init function. */
-    vPortFree( pCborEncoder );
+    AwsIotSerializer_FreeCborEncoder( pCborEncoder );
 
     /* Reset pHandle to be NULL. */
     pEncoderObject->pHandle = NULL;
@@ -188,7 +187,7 @@ static AwsIotSerializerError_t _openContainer( AwsIotSerializerEncoderObject_t *
     CborError cborError = CborNoError;
 
     CborEncoder * pOuterEncoder = ( CborEncoder * ) pEncoderObject->pHandle;
-    CborEncoder * pInnerEncoder = pvPortMalloc( sizeof( CborEncoder ) );
+    CborEncoder * pInnerEncoder = AwsIotSerializer_MallocCborEncoder( sizeof( CborEncoder ) );
 
     if( pInnerEncoder != NULL )
     {
@@ -254,7 +253,7 @@ static AwsIotSerializerError_t _closeContainer( AwsIotSerializerEncoderObject_t 
     cborError = cbor_encoder_close_container( pOuterEncoder, pInnerEncoder );
 
     /* Free inner encoder's memory regardless the result of "close container". */
-    vPortFree( pInnerEncoder );
+    AwsIotSerializer_FreeCborEncoder( pInnerEncoder );
 
     _translateErrorCode( cborError, &returnedError );
 
