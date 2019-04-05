@@ -33,11 +33,11 @@
 
 #include "FreeRTOS.h"
 
-#include "aws_ble_event_manager.h"
+#include "aws_ble_event_manager_config.h"
 #include "bt_hal_manager_adapter_ble.h"
 #include "bt_hal_manager.h"
 #include "bt_hal_gatt_server.h"
-#include "aws_ble_config.h"
+#include "iot_ble_config.h"
 #include "aws_ble_hal_internals.h"
 #include "aws_ble_gap_config.h"
 #include "ble_gap.h"
@@ -60,7 +60,7 @@ static BTCallbacks_t xBTCallbacks;
 BTProperties_t xProperties;
 BTBdaddr_t xConnectionRemoteAddress;
 static bool bIsConnected = false;
-uint8_t pucBondedAddresses[ btADDRESS_LEN * bleconfigMAX_BONDED_DEVICES ];
+uint8_t pucBondedAddresses[ btADDRESS_LEN * IOT_BLE_MAX_BONDED_DEVICES ];
 
 BTStatus_t prvBTManagerInit( const BTCallbacks_t * pxCallbacks );
 BTStatus_t prvBtManagerCleanup( void );
@@ -691,7 +691,7 @@ BTStatus_t prvBTManagerInit( const BTCallbacks_t * pxCallbacks )
     memset( &xProperties, 0, sizeof( xProperties ) );
     xProperties.xDeviceType = eBTdeviceDevtypeBle;
     /* Set the device name from the aws_ble_config.h. We store it without a trailing zero. */
-    xProperties.usDeviceNameLength = sizeof( bleconfigDEVICE_NAME ) - 1;
+    xProperties.usDeviceNameLength = sizeof( IOT_BLE_DEVICE_NAME ) - 1;
     xProperties.puDeviceName = ( uint8_t * ) pvPortMalloc( xProperties.usDeviceNameLength );
     xProperties.ulMtu = NRF_SDH_BLE_GATT_MAX_MTU_SIZE;
     xProperties.bOnlySecure = true;
@@ -699,7 +699,7 @@ BTStatus_t prvBTManagerInit( const BTCallbacks_t * pxCallbacks )
 
     if( xProperties.puDeviceName != NULL )
     {
-        memcpy( xProperties.puDeviceName, bleconfigDEVICE_NAME, xProperties.usDeviceNameLength );
+        memcpy( xProperties.puDeviceName, IOT_BLE_DEVICE_NAME, xProperties.usDeviceNameLength );
     }
     else
     {
@@ -888,7 +888,7 @@ BTStatus_t prvBTGetDeviceProperty( BTPropertyType_t xType )
                        memcpy(&(pucBondedAddresses[peer_count * btADDRESS_LEN]), bonding_data.peer_ble_id.id_addr_info.addr, btADDRESS_LEN); 
                        peer_count += 1;
 
-                       if( peer_count >= bleconfigMAX_BONDED_DEVICES )
+                       if( peer_count >= IOT_BLE_MAX_BONDED_DEVICES )
                        {
                            break;
                        }
@@ -1232,7 +1232,7 @@ BTStatus_t prvBTRemoveBond( const BTBdaddr_t * pxBdAddr )
             /*  }; */
             peer_count += 1;
 
-            if( peer_count >= bleconfigMAX_BONDED_DEVICES )
+            if( peer_count >= IOT_BLE_MAX_BONDED_DEVICES )
             {
                 xErrCode = NRF_ERROR_NOT_FOUND;
                 break;
