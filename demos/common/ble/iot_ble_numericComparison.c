@@ -86,21 +86,24 @@ void userInputTask(void *pvParameters)
     	{
               configPRINTF(("Numeric comparison:%ld\n", xPassKeyConfirm.ulPassKey ));
               configPRINTF(("Press 'y' to confirm\n"));
-              /* Waiting for UART event. */
-              if ( getUserMessage( &xINPUTmessage, xAuthTimeout ) == pdTRUE ) {
-                    if((xINPUTmessage.pcData[0] == 'y')||(xINPUTmessage.pcData[0] == 'Y'))
-                    {
-                    	configPRINTF(("Key accepted\n"));
-                        IotBle_ConfirmNumericComparisonKeys(&xPassKeyConfirm.xAdress, true);
-                    }else
-                    {
-                    	configPRINTF(("Key Rejected\n"));
-                        IotBle_ConfirmNumericComparisonKeys(&xPassKeyConfirm.xAdress, false);
-
-                    }
-
-                    vPortFree(xINPUTmessage.pcData);
-              }
+              
+              configPRINTF(("Key accepted\n"));
+              IotBle_ConfirmNumericComparisonKeys(&xPassKeyConfirm.xAdress, true);
+//              /* Waiting for UART event. */
+//              if ( getUserMessage( &xINPUTmessage, xAuthTimeout ) == pdTRUE ) {
+//                    if((xINPUTmessage.pcData[0] == 'y')||(xINPUTmessage.pcData[0] == 'Y'))
+//                    {
+//                    	configPRINTF(("Key accepted\n"));
+//                        IotBle_ConfirmNumericComparisonKeys(&xPassKeyConfirm.xAdress, true);
+//                    }else
+//                    {
+//                    	configPRINTF(("Key Rejected\n"));
+//                        IotBle_ConfirmNumericComparisonKeys(&xPassKeyConfirm.xAdress, false);
+//
+//                    }
+//
+//                    vPortFree(xINPUTmessage.pcData);
+//              }
     	}
     }
     vTaskDelete(NULL);

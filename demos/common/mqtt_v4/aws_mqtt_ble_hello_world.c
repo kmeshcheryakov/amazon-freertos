@@ -35,7 +35,12 @@
  * run over both a secured TCP/IP connection over WIFI network or over a secured BLE connection using
  * Mobile phone SDK as MQTT Proxy to the cloud.
  */
+#ifdef IOT_CONFIG_FILE
+    #include IOT_CONFIG_FILE
+#endif
 
+/* MQTT include. */
+#include "iot_mqtt.h"
 #include <stdbool.h>
 #include <string.h>
 
@@ -49,11 +54,9 @@
 #include "semphr.h"
 #include "task.h"
 
-/* MQTT library includes */
-#include "iot_mqtt.h"
-
 /* Network connection includes */
 #include "aws_iot_network_manager.h"
+/* Demo network handling */
 #include "aws_iot_demo_network.h"
 
 /* Configuration includes */
