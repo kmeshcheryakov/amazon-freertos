@@ -118,10 +118,10 @@ typedef enum
 } DeviceState_t;
 
 /* LED definitions*/
-#define LED_ONE                             BSP_LED_0_MASK
+#define LED_ONE                             BSP_LED_3_MASK
 #define LED_TWO                             BSP_LED_1_MASK
 #define LED_THREE                           BSP_LED_2_MASK
-#define LED_FOUR                            BSP_LED_3_MASK
+#define LED_FOUR                            BSP_LED_0_MASK
 #define ALL_APP_LED                        (BSP_LED_0_MASK | BSP_LED_1_MASK | \
                                             BSP_LED_2_MASK | BSP_LED_3_MASK)            /**< Define used for simultaneous operation of all application LEDs. */
 #define LED_BLINK_INTERVAL_MS               ( 300 )                                     /**< LED blinking interval. */
@@ -742,7 +742,7 @@ static BaseType_t prbStartPublishMessageTask( void )
 
     if( xRet == pdFALSE )
     {
-        xErrCode = pdFAIL;
+        xErrCode = NRF_ERROR_INTERNAL;
 
         if( xSubscriptionHandle != AWSIOT_NETWORK_SUBSCRIPTION_HANDLE_INITIALIZER )
         {
@@ -762,9 +762,9 @@ static BaseType_t prbStartPublishMessageTask( void )
 
 void vStartMQTTBLESensorsDemo( void )
 {
-    if( prbStartPublishMessageTask() == pdFAIL )
+    if( prbStartPublishMessageTask() != NRF_SUCCESS )
     {
-        IotLogInfo( "Failed to create task for publish measurements\n");
+        IotLogInfo( "Failed to create task for publish measurements");
     }
 }
 /*-----------------------------------------------------------*/
@@ -884,19 +884,19 @@ static void button_event_handler(uint8_t pin_no, uint8_t button_action)
     {
         switch (pin_no)
         {
-            case BSP_BUTTON_0:
+            case BSP_BUTTON_2:
                 ulButton = BUTTON_ONE;
                 break;
 
-            case BSP_BUTTON_1:
+            case BSP_BUTTON_3:
                 ulButton = BUTTON_TWO;
                 break;
 
-            case BSP_BUTTON_2:
+            case BSP_BUTTON_0:
                 ulButton = BUTTON_THREE;
                 break;
 
-            case BSP_BUTTON_3:
+            case BSP_BUTTON_1:
                 ulButton = BUTTON_FOUR;
                 break;
 
